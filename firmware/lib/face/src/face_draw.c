@@ -192,7 +192,7 @@ static uint32_t glow_hex(uint32_t opa)
 /* Glow pass (wide) then the core line, so the glow never covers a stroke. */
 static void glow_poly(lv_layer_t * layer, const poly_t * p, float width)
 {
-    for(int pass = 0; pass < 2; ++pass) {
+    for(int pass = FACE_GLOW_ENABLED ? 0 : 1; pass < 2; ++pass) {
         const float w = pass ? width : width + FACE_EMOJI_GLOW;
         const uint32_t color = pass ? FACE_COLOR_THEME : glow_hex(FACE_EMOJI_GLOW_OPA);
         for(int i = 0; i + 1 < p->n; ++i) {
@@ -203,16 +203,20 @@ static void glow_poly(lv_layer_t * layer, const poly_t * p, float width)
 
 static void glow_ring(lv_layer_t * layer, float cx, float cy, float radius, float width)
 {
-    stroke_arc(layer, cx, cy, radius + FACE_EMOJI_GLOW / 2.0f, 0, 360, width + FACE_EMOJI_GLOW,
-               glow_hex(FACE_EMOJI_GLOW_OPA), LV_OPA_COVER);
+    if(FACE_GLOW_ENABLED) {
+        stroke_arc(layer, cx, cy, radius + FACE_EMOJI_GLOW / 2.0f, 0, 360, width + FACE_EMOJI_GLOW,
+                   glow_hex(FACE_EMOJI_GLOW_OPA), LV_OPA_COVER);
+    }
     stroke_arc(layer, cx, cy, radius, 0, 360, width, FACE_COLOR_THEME, LV_OPA_COVER);
 }
 
 static void glow_fill(lv_layer_t * layer, float x1, float y1, float x2, float y2, int32_t radius)
 {
     const float g = FACE_EMOJI_GLOW / 2.0f;
-    fill_rect(layer, x1 - g, y1 - g, x2 + g, y2 + g, radius, glow_hex(FACE_EMOJI_GLOW_OPA),
-              LV_OPA_COVER);
+    if(FACE_GLOW_ENABLED) {
+        fill_rect(layer, x1 - g, y1 - g, x2 + g, y2 + g, radius, glow_hex(FACE_EMOJI_GLOW_OPA),
+                  LV_OPA_COVER);
+    }
     fill_rect(layer, x1, y1, x2, y2, radius, FACE_COLOR_THEME, LV_OPA_COVER);
 }
 
@@ -220,7 +224,7 @@ static void glow_fill(lv_layer_t * layer, float x1, float y1, float x2, float y2
 static void glow_half_disc(lv_layer_t * layer, float cx, float cy, float radius)
 {
     if(radius < 2.0f) return;
-    for(int pass = 0; pass < 2; ++pass) {
+    for(int pass = FACE_GLOW_ENABLED ? 0 : 1; pass < 2; ++pass) {
         const float r = pass ? radius : radius + FACE_EMOJI_GLOW / 2.0f;
         lv_draw_arc_dsc_t d;
         lv_draw_arc_dsc_init(&d);

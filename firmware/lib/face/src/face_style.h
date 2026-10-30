@@ -121,6 +121,9 @@ typedef struct {
 #define FACE_EMOJI_EYE_W 66             /* box for line-art eyes */
 #define FACE_EMOJI_EYE_H 54
 #define FACE_EMOJI_STROKE 10            /* px, line-art eyes, brows and mouth lines */
+#ifndef FACE_GLOW_ENABLED
+#define FACE_GLOW_ENABLED 1             /* 0: skip the glow pass (less drawing per frame) */
+#endif
 #define FACE_EMOJI_GLOW 9               /* px of glow around every line */
 #define FACE_EMOJI_GLOW_OPA 55          /* 0-255 */
 #define FACE_EMOJI_BLINK_FLATTEN 0.85f  /* a blink squashes line-art eyes this much */
