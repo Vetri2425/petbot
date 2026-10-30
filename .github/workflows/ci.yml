@@ -31,8 +31,9 @@ jobs:
         run: pio run -e esp32-s3-devkitc-1
       - name: Memory report
         run: |
-          size="$HOME/.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-size"
-          "$size" -A .pio/build/esp32-s3-devkitc-1/firmware.elf | grep -E '^\.(iram0|dram0|flash|ext_ram|rtc)' || true
+          size=$(find "$HOME/.platformio/packages" -type f \( -name 'xtensa-esp32s3-elf-size' -o -name 'xtensa-esp-elf-size' \) | head -n 1)
+          test -n "$size" || { echo "xtensa size tool not found"; exit 1; }
+          "$size" -A .pio/build/esp32-s3-devkitc-1/firmware.elf | grep -E '^\.(iram0|dram0|flash|ext_ram|rtc)'
       - uses: actions/upload-artifact@v7
         with:
           name: firmware-esp32-s3-devkitc-1
