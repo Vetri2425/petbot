@@ -8,15 +8,17 @@
 #include <stdint.h>
 
 /* ---- Face style --------------------------------------------------------------------- */
-/* FACE_STYLE_LINE: glowing emoticon-like line art with eyebrows and a mouth (calm eyes are
- * filled pills). FACE_STYLE_FILLED: two filled eyes with lids. face_set_style() overrides. */
-#define FACE_DEFAULT_STYLE FACE_STYLE_LINE
+/* FACE_STYLE_EMOJI: big filled eyes when calm, full emoji faces (line-art eyes, mouth,
+ * eyebrows) for strong moods and reflexes. FACE_STYLE_FILLED: filled eyes only, no mouth.
+ * face_set_style() overrides at runtime. */
+#define FACE_DEFAULT_STYLE FACE_STYLE_EMOJI
 
 /* ---- Screen and colors ------------------------------------------------------------- */
 #define FACE_SCREEN_W 320          /* px, 2.0" ST7789 in landscape */
 #define FACE_SCREEN_H 240
 #define FACE_COLOR_BG 0x000000
-#define FACE_COLOR_EYE 0x00E5FF    /* cyan */
+#define FACE_COLOR_THEME 0x00E5FF  /* cyan: eyes, mouth, brows, lines and their glow.
+                                     * Change this one value to match the body color. */
 
 /* ---- Neutral eye geometry ---------------------------------------------------------- */
 #define FACE_EYE_W 72              /* px */
@@ -111,88 +113,76 @@ typedef struct {
 #define FACE_EXPR_CURIOUS {.grow_left = 0.18f, .grow_right = -0.10f, .tilt = 10.0f}
 #define FACE_EXPR_SURPRISED {.grow_w = 0.22f, .grow_h = 0.12f, .round = 1.0f, .dy = -6.0f}
 
-/* ---- Line style ---------------------------------------------------------------------- */
-#define FACE_LINE_EYE_SPACING 112       /* px between eye centers */
-#define FACE_LINE_EYE_Y (-16)           /* px, eye centers relative to the screen middle */
-#define FACE_LINE_PILL_W 34             /* calm (neutral) eyes are filled pills */
-#define FACE_LINE_PILL_H 56
-#define FACE_LINE_SHAPE_W 52            /* box for line-art eyes */
-#define FACE_LINE_SHAPE_H 44
-#define FACE_LINE_RING_D 52             /* ring-eye diameter */
-#define FACE_LINE_STROKE 7              /* px line width */
-#define FACE_LINE_GLOW 9                /* px of glow around every line and pill */
-#define FACE_LINE_GLOW_OPA 55           /* 0-255 */
-#define FACE_LINE_BLINK_FLATTEN 0.85f   /* a blink squashes the eye this much */
-#define FACE_LINE_BROW_LEN 42
-#define FACE_LINE_BROW_GAP 14           /* px above the eye box */
-#define FACE_LINE_BROW_TILT_PX 9        /* inner end up (worried) or down (angry) at tilt 1 */
-#define FACE_LINE_BROW_LIFT_PX 10       /* raised brow at lift 1 */
-#define FACE_LINE_MOUTH_Y 54            /* px below the screen middle */
-#define FACE_LINE_MOUTH_W 40
-#define FACE_LINE_MOUTH_H 13
-#define FACE_LINE_MOUTH_GAZE 0.5f       /* the mouth follows the gaze this much */
-#define FACE_LINE_MIN_INTENSITY 30      /* weaker moods show the calm face */
-#define FACE_LINE_LAUGH_INTENSITY 90    /* happy at/above this laughs (^ ^ and a grin) */
-#define FACE_LINE_FURIOUS_INTENSITY 85  /* angry at/above this fumes (> < and a wavy mouth) */
+/* ---- Emoji style ---------------------------------------------------------------------
+ * Calm moods (neutral, curious, sleepy), and any mood below FACE_EMOJI_INTENSITY, keep the
+ * big filled eyes (shaped by FACE_EXPR_*) with a mild mouth. At or above it a mood becomes a
+ * full emoji face. Shapes swap with the squash pop; brows and mouth size are springs. */
+#define FACE_EMOJI_INTENSITY 70
+#define FACE_EMOJI_EYE_W 66             /* box for line-art eyes */
+#define FACE_EMOJI_EYE_H 54
+#define FACE_EMOJI_STROKE 10            /* px, line-art eyes, brows and mouth lines */
+#define FACE_EMOJI_GLOW 9               /* px of glow around every line */
+#define FACE_EMOJI_GLOW_OPA 55          /* 0-255 */
+#define FACE_EMOJI_BLINK_FLATTEN 0.85f  /* a blink squashes line-art eyes this much */
+#define FACE_EMOJI_BROW_LEN 44
+#define FACE_EMOJI_BROW_GAP 12          /* px above the eye */
+#define FACE_EMOJI_BROW_TILT_PX 14      /* inner end up (sad) or down (angry) at tilt 1 */
+#define FACE_EMOJI_BROW_LIFT_PX 12      /* raised brows (surprised) at lift 1 */
+#define FACE_EMOJI_MOUTH_Y 70           /* px below the screen middle */
+#define FACE_EMOJI_MOUTH_W 44
+#define FACE_EMOJI_MOUTH_H 16
+#define FACE_EMOJI_MOUTH_GAZE 0.5f      /* the mouth follows the gaze this much */
+#define FACE_SCARED_MS 1500             /* "scared" anim: > < and gritted teeth */
+#define FACE_IDEA_MS 2200               /* "idea" anim: lightbulb eyes */
+#define FACE_TEARS_SAD_INTENSITY 80     /* sad at or above this cries (tears loop) */
 
 typedef enum {
-    FACE_EYE_PILL,     /* filled pill (calm) */
-    FACE_EYE_CRESCENT, /* upward arc (happy) */
-    FACE_EYE_CHEVRON,  /* ^ (laughing) */
-    FACE_EYE_DROOP,    /* low curve (sad) */
-    FACE_EYE_HALF,     /* filled lower half (angry) */
-    FACE_EYE_FLAT,     /* - (sleepy, squint) */
-    FACE_EYE_RING,     /* O with a pupil (surprised, curious) */
-    FACE_EYE_SQUINT    /* > < (fuming, scrunched) */
-} face_line_eye_t;
+    FACE_EYE_BLOB,    /* the big filled eye (lids, slants, cheek from FACE_EXPR_*) */
+    FACE_EYE_HAPPY,   /* ^ ^ happy arcs */
+    FACE_EYE_SQUEEZE, /* > < squeezed shut */
+    FACE_EYE_DROOPY   /* drooping arcs, outer ends low */
+} face_emoji_eye_t;
 
 typedef enum {
     FACE_MOUTH_NONE,
     FACE_MOUTH_SMILE,
-    FACE_MOUTH_GRIN,  /* open half-disc */
+    FACE_MOUTH_OPEN_SMILE, /* open D */
     FACE_MOUTH_FROWN,
-    FACE_MOUTH_FLAT,
+    FACE_MOUTH_WOBBLY,     /* shaky sad line */
     FACE_MOUTH_O,
-    FACE_MOUTH_WAVY,
-    FACE_MOUTH_DOT
+    FACE_MOUTH_GRITTED,    /* clenched teeth */
+    FACE_MOUTH_FLAT,
+    FACE_MOUTH_POUT
 } face_mouth_t;
 
-typedef enum { FACE_BROWS_NONE, FACE_BROWS_BOTH, FACE_BROWS_LEFT } face_brows_t;
-
-/* A line-style expression. Eyes are in the robot's frame (ADR 0014). Intensity scales
- * brow tilt/lift and mouth size; eye and mouth shapes swap with a squash pop. */
+/* One face: eye shape (both eyes), mouth, and brows. */
 typedef struct {
-    uint8_t eye_right;  /* face_line_eye_t, robot's right eye (screen left) */
-    uint8_t eye_left;   /* robot's left eye (screen right) */
-    uint8_t mouth;      /* face_mouth_t */
-    uint8_t brows;      /* face_brows_t; LEFT = robot's left brow only */
-    float brow_tilt;    /* +1 worried (inner ends up), -1 angry (inner ends down) */
-    float brow_lift;    /* 0..1 raise */
-    float mouth_scale;
-} face_line_expr_t;
+    uint8_t eyes;      /* face_emoji_eye_t */
+    uint8_t mouth;     /* face_mouth_t */
+    uint8_t brows;     /* 0 = hidden, 1 = shown */
+    float brow_tilt;   /* +1 sad (inner ends up), -1 angry (inner ends down) */
+    float brow_lift;   /* 0..1 raised */
+    float mouth_scale; /* mild faces also scale this by intensity */
+} face_emoji_t;
 
-#define FACE_LINE_NEUTRAL {.eye_right = FACE_EYE_PILL, .eye_left = FACE_EYE_PILL, .mouth_scale = 1.0f}
-#define FACE_LINE_HAPPY {.eye_right = FACE_EYE_CRESCENT, .eye_left = FACE_EYE_CRESCENT, \
-                         .mouth = FACE_MOUTH_SMILE, .mouth_scale = 1.0f}
-#define FACE_LINE_LAUGH {.eye_right = FACE_EYE_CHEVRON, .eye_left = FACE_EYE_CHEVRON, \
-                         .mouth = FACE_MOUTH_GRIN, .mouth_scale = 1.0f}
-#define FACE_LINE_SAD {.eye_right = FACE_EYE_DROOP, .eye_left = FACE_EYE_DROOP, \
-                       .mouth = FACE_MOUTH_FROWN, .brows = FACE_BROWS_BOTH, .brow_tilt = 1.0f, \
-                       .mouth_scale = 0.8f}
-#define FACE_LINE_ANGRY {.eye_right = FACE_EYE_HALF, .eye_left = FACE_EYE_HALF, \
-                         .mouth = FACE_MOUTH_FLAT, .brows = FACE_BROWS_BOTH, .brow_tilt = -1.0f, \
-                         .mouth_scale = 0.9f}
-#define FACE_LINE_FURIOUS {.eye_right = FACE_EYE_SQUINT, .eye_left = FACE_EYE_SQUINT, \
-                           .mouth = FACE_MOUTH_WAVY, .brows = FACE_BROWS_BOTH, .brow_tilt = -1.0f, \
-                           .mouth_scale = 1.0f}
-#define FACE_LINE_SLEEPY {.eye_right = FACE_EYE_FLAT, .eye_left = FACE_EYE_FLAT, \
-                          .mouth = FACE_MOUTH_DOT, .mouth_scale = 1.0f}
-#define FACE_LINE_CURIOUS {.eye_right = FACE_EYE_FLAT, .eye_left = FACE_EYE_RING, \
-                           .mouth = FACE_MOUTH_O, .brows = FACE_BROWS_LEFT, .brow_lift = 1.0f, \
-                           .mouth_scale = 0.7f}
-#define FACE_LINE_SURPRISED {.eye_right = FACE_EYE_RING, .eye_left = FACE_EYE_RING, \
-                             .mouth = FACE_MOUTH_O, .brows = FACE_BROWS_BOTH, .brow_lift = 1.0f, \
-                             .mouth_scale = 1.0f}
+/* Below FACE_EMOJI_INTENSITY: filled eyes with a mild mouth (none when neutral). */
+#define FACE_EMOJI_CALM {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_NONE, .mouth_scale = 1.0f}
+#define FACE_EMOJI_MILD_HAPPY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_SMILE, .mouth_scale = 1.0f}
+#define FACE_EMOJI_MILD_SAD {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_FROWN, .mouth_scale = 0.9f}
+#define FACE_EMOJI_MILD_ANGRY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_FLAT, .mouth_scale = 0.9f}
+#define FACE_EMOJI_MILD_SURPRISED {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_O, .mouth_scale = 0.7f}
+#define FACE_EMOJI_CURIOUS {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_POUT, .mouth_scale = 1.0f}
+#define FACE_EMOJI_SLEEPY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_NONE, .mouth_scale = 1.0f}
+
+/* At or above FACE_EMOJI_INTENSITY: full emoji faces. */
+#define FACE_EMOJI_HAPPY {.eyes = FACE_EYE_HAPPY, .mouth = FACE_MOUTH_OPEN_SMILE, .mouth_scale = 1.0f}
+#define FACE_EMOJI_SAD {.eyes = FACE_EYE_DROOPY, .mouth = FACE_MOUTH_WOBBLY, .brows = 1, \
+                        .brow_tilt = 1.0f, .mouth_scale = 1.0f}
+#define FACE_EMOJI_ANGRY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_GRITTED, .brows = 1, \
+                          .brow_tilt = -1.0f, .mouth_scale = 1.0f}
+#define FACE_EMOJI_SURPRISED {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_O, .brows = 1, \
+                              .brow_lift = 1.0f, .mouth_scale = 1.0f}
+#define FACE_EMOJI_SCARED {.eyes = FACE_EYE_SQUEEZE, .mouth = FACE_MOUTH_GRITTED, .mouth_scale = 0.9f}
 
 /* ---- Glyph eyes: each eye becomes a vector symbol for a while ------------------------- */
 #define FACE_GLYPH_SIZE 92              /* px, glyph box at scale 1 */
@@ -200,6 +190,8 @@ typedef struct {
 #define FACE_GLYPH_SWAP_BELOW 0.08f     /* swap glyphs once the old one has shrunk to this */
 #define FACE_COLOR_HEART 0xFF4F7B
 #define FACE_COLOR_STAR 0xFFD43B
+#define FACE_COLOR_BULB 0xFFE066
+#define FACE_COLOR_BULB_BASE 0xB8C2CC
 #define FACE_GLYPH_STROKE 11            /* px, x and spiral line width */
 #define FACE_CLOSED_STROKE 8            /* px, closed-eye arc width */
 #define FACE_SPIRAL_DEG_PER_S 540.0f
@@ -219,9 +211,12 @@ typedef struct {
 #define FACE_BLUSH_W 46
 #define FACE_BLUSH_H 16
 #define FACE_BLUSH_DY 14                /* px below the eye */
-#define FACE_TEAR_MS 1600
-#define FACE_TEAR_SIZE 9                /* drop radius */
-#define FACE_TEAR_FALL_PX 72
+#define FACE_TEARS_MS 3200              /* "tear" anim: two streams, two loops */
+#define FACE_TEARS_PERIOD_MS 1600       /* one drop cycle down each stream */
+#define FACE_TEARS_LEN_PX 78            /* stream length below the eye */
+#define FACE_TEARS_W 6                  /* stream width */
+#define FACE_TEARS_OPA 110              /* stream opacity (drops are opaque) */
+#define FACE_TEAR_SIZE 8                /* drop radius */
 #define FACE_SWEAT_MS 1600
 #define FACE_SWEAT_SIZE 8
 #define FACE_SWEAT_SLIDE_PX 24

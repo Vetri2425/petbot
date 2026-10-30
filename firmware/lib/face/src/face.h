@@ -14,7 +14,7 @@ extern "C" {
 
 typedef enum {
     FACE_STYLE_FILLED, /* two filled eyes with lids */
-    FACE_STYLE_LINE    /* glowing emoticon-like line art with eyebrows and a mouth */
+    FACE_STYLE_EMOJI    /* glowing emoticon-like line art with eyebrows and a mouth */
 } face_style_t;
 
 /* Create the face (FACE_SCREEN_W x FACE_SCREEN_H, centered) on `parent`. Call once.
@@ -49,6 +49,7 @@ typedef enum {
     FACE_GLYPH_SPIRAL,
     FACE_GLYPH_X,
     FACE_GLYPH_CLOSED,
+    FACE_GLYPH_BULB, /* lightbulb: an idea */
     FACE_GLYPH_COUNT
 } face_glyph_t;
 

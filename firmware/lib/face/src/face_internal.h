@@ -11,21 +11,22 @@ typedef struct {
     float lid_top, slant_in, slant_out, cheek;
 } eye_geom_t;
 
-/* Line-style parts, by screen position (0 = screen left = the robot's right). */
+/* Emoji-style layers. */
 typedef struct {
-    uint8_t eye[2];     /* face_line_eye_t */
-    uint8_t mouth;      /* face_mouth_t */
-    uint8_t brow_on[2];
-    float brow_tilt;    /* +1 worried, -1 angry */
-    float brow_lift;    /* 0..1 */
+    uint8_t eyes;    /* face_emoji_eye_t */
+    uint8_t mouth;   /* face_mouth_t */
+    uint8_t brows;   /* 0/1 */
+    float brow_tilt; /* +1 sad (inner up), -1 angry (inner down) */
+    float brow_lift; /* 0..1 */
     float mouth_scale;
     float mouth_x, mouth_y;
-} line_render_t;
+} emoji_render_t;
 
 /* Everything the draw code needs for one frame. Compared with memcmp to skip redraws. */
 typedef struct {
     face_style_t style;
-    line_render_t line;
+    emoji_render_t emoji;
+    float tears_phase; /* 0..1 position of the drops in their loop */
     eye_geom_t eyes[2]; /* by screen position: 0 = screen left (robot's right eye) */
     face_glyph_t glyph; /* FACE_GLYPH_NONE: normal eyes */
     float glyph_w, glyph_h; /* glyph (or normal-eye) scale while popping */
