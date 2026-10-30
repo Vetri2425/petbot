@@ -61,7 +61,7 @@ def test_personality_loads() -> None:
     assert head.anims == (("blink", 0.0),) and head.only_when_asleep
     assert P.reflexes["imu fall"].anims == (("scared", 0.0), ("exclaim", 0.0), ("tear", 0.9))
     assert P.reflexes["imu pickup"].anims == (("scared", 0.0),)
-    assert set(P.triggers) == {"hearts", "zzz", "question"}
+    assert set(P.triggers) == {"hearts", "zzz", "question", "idea"}
     assert set(P.mood_ranges) == {"happy", "sad", "angry", "sleepy", "curious", "surprised"}
     assert len(P.impulses) == sum(len(d) for d in EVENTS.values())
 
@@ -94,6 +94,7 @@ def test_personality_loads() -> None:
         lambda d: d["triggers"].update(empty={"anim": "music", "hold_s": 1, "cooldown_s": 1}),
         lambda d: d["triggers"]["question"].update(above={"hunger": 0.5}),  # unknown signal
         lambda d: d["triggers"]["hearts"].update(mood="ecstatic"),  # unknown mood
+        lambda d: d["triggers"]["idea"].update(impulse={"hunger": 0.1}),  # unknown signal
     ],
 )
 def test_personality_is_strict(mutate) -> None:
@@ -423,13 +424,64 @@ def test_zzz_loops_while_asleep_and_stops_on_waking() -> None:
     assert not anim_times(sent, "zzz")
 
 
-def test_question_once_per_boredom_peak() -> None:
+def curious_state() -> MoodState:
+    """Strongly curious: bored but awake, so the shown mood is curious at 100."""
+    s = replace(initial_state(P), boredom=1.0, energy=0.9, mood="curious", intensity=100)
+    return replace(s, sent_mood="curious", sent_intensity=100)
+
+
+def test_idea_after_a_long_curious_stretch_then_a_happy_bump() -> None:
+    idea = P.triggers["idea"]
     rng = random.Random(0)
-    s, sent = run_ticks(initial_state(P), 1800, rng)  # 30 min alone
-    assert len(anim_times(sent, "question")) == 1
-    s, _ = step(s, [HEAD], TICK_S, P, rng)  # boredom drops...
-    _, sent = run_ticks(s, 1200, rng)  # ...and peaks again
-    assert len(anim_times(sent, "question")) == 1
+    s = curious_state()
+    s, sent = run_ticks(s, idea.hold_s - 1, rng)
+    assert not anim_times(sent, "idea")  # not before 20 s of curiosity
+    before = s.valence
+    s, sent = run_ticks(s, 2, rng)
+    times = anim_times(sent, "idea")
+    assert len(times) == 1 and times[0] == pytest.approx(idea.hold_s, abs=0.15)
+    assert s.valence > before + 0.2  # the happy bump...
+    _, after = run_ticks(s, 2, rng)
+    assert [m.name for m in moods(sent + after)][0] == "happy"  # ...shows: curiosity satisfied
+
+
+def test_idea_is_rare() -> None:
+    rng = random.Random(0)
+    s, sent = run_ticks(curious_state(), 60, rng)
+    assert len(anim_times(sent, "idea")) == 1
+    # Even if it stays (or gets) curious again, no second lightbulb within the cooldown.
+    for _ in range(9):
+        s, more = run_ticks(replace(s, boredom=1.0, energy=0.9), 60, rng)
+        assert not anim_times(more, "idea")
+
+
+def test_mild_curiosity_never_has_ideas() -> None:
+    s = replace(curious_state(), mood="curious", intensity=50)
+    trig = P.triggers["idea"]
+    assert trig.min_intensity == 70 and trig.cooldown_s >= 600
+    # Boredom 0.75: curious at ~50, below the idea threshold.
+    s = replace(s, boredom=0.75)
+    _, sent = run_ticks(s, 60, random.Random(0))
+    assert not anim_times(sent, "idea")
+
+
+def test_question_once_per_boredom_peak() -> None:
+    # Ideas also lower boredom; leave them out to test the question trigger on its own.
+    p = replace(P, triggers={k: v for k, v in P.triggers.items() if k != "idea"})
+    rng = random.Random(0)
+
+    def alone(s: MoodState, seconds: float) -> tuple[MoodState, int]:
+        count = 0
+        for _ in range(round(seconds / TICK_S)):
+            s, out = step(s, [], TICK_S, p, rng)
+            count += out.count(Anim("question"))
+        return s, count
+
+    s, count = alone(initial_state(p), 1800)  # 30 min alone
+    assert count == 1
+    s, _ = step(s, [HEAD], TICK_S, p, rng)  # boredom drops...
+    _, count = alone(s, 1200)  # ...and peaks again
+    assert count == 1
 
 
 # ---- scenarios (sim/mood_replay.py) ----

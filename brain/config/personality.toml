@@ -135,6 +135,7 @@ only_when_asleep = true
 # Conditions (all given ones must hold): asleep; mood + min_intensity (shown mood);
 # above = { <signal> = threshold }; touched_within_s (a touch event this recently).
 # cooldown_s: repeat period while the condition holds; 0 = once until it clears again.
+# impulse (optional): applied to the mood model when the trigger fires.
 [triggers.hearts]         # sustained happiness from petting
 anim = "hearts"
 mood = "happy"
@@ -148,6 +149,14 @@ anim = "zzz"
 asleep = true
 hold_s = 2.0
 cooldown_s = 4.0
+
+[triggers.idea]           # rare: a long curious stretch "figures something out"
+anim = "idea"
+mood = "curious"
+min_intensity = 70
+hold_s = 20.0
+cooldown_s = 600.0
+impulse = { valence = 0.3, arousal = 0.1, boredom = -0.5 }  # happy bump; curiosity satisfied
 
 [triggers.question]       # "anyone there?" at peak boredom
 anim = "question"

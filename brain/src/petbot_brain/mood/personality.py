@@ -47,6 +47,7 @@ class Trigger:
     touched_within_s: float | None  # a touch event must have come this recently
     hold_s: float
     cooldown_s: float  # repeat period while the condition holds; 0: once per episode
+    impulse: Mapping[str, float]  # applied to the model when it fires (may be empty)
 
 
 @dataclass(frozen=True)
@@ -239,9 +240,10 @@ def _trigger(t: _Table) -> Trigger:
             above[signal] = above_t.num(signal, -1.0, 1.0)
         above_t.done()
     touched = t.num("touched_within_s", 0.0) if t.has("touched_within_s") else None
+    impulse = _impulse(t.table("impulse"), IMPULSE_SIGNALS) if t.has("impulse") else {}
     trigger = Trigger(
         anim, asleep, mood, min_intensity, above, touched, t.num("hold_s", 0.0),
-        t.num("cooldown_s", 0.0),
+        t.num("cooldown_s", 0.0), impulse,
     )  # fmt: skip
     t.done()
     if asleep is None and mood is None and not above and touched is None:

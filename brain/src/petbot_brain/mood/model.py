@@ -248,6 +248,7 @@ def _triggers(s: MoodState, p: Personality) -> tuple[MoodState, list[Message]]:
     }
     states = dict(s.triggers)
     anims: list[Message] = []
+    kick = {"valence": 0.0, "arousal": 0.0, "social": 0.0, "boredom": 0.0}
     for name, trig in p.triggers.items():
         since, last_fired, fired_episode = states.get(name, (None, -math.inf, False))
         holds = (
@@ -269,8 +270,17 @@ def _triggers(s: MoodState, p: Personality) -> tuple[MoodState, list[Message]]:
         if ready:
             anims.append(Anim(trig.anim))
             last_fired, fired_episode = s.t, True
+            for signal, amount in trig.impulse.items():
+                kick[signal] += amount
         states[name] = (since, last_fired, fired_episode)
-    return replace(s, triggers=states), anims
+    return replace(
+        s,
+        triggers=states,
+        valence=_clamp(s.valence + kick["valence"], -1.0, 1.0),
+        arousal=_clamp(s.arousal + kick["arousal"], 0.0, 1.0),
+        social=_clamp(s.social + kick["social"], 0.0, 1.0),
+        boredom=_clamp(s.boredom + kick["boredom"], 0.0, 1.0),
+    ), anims
 
 
 def _idle_anim(s: MoodState, p: Personality, rng: random.Random) -> tuple[MoodState, list[Message]]:
