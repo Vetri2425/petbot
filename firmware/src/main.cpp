@@ -1,9 +1,10 @@
-// PetBot firmware: boot banner, UART link to the brain, debug keys on USB serial.
+// PetBot firmware: boot banner, face on the ST7789, UART link to the brain, debug keys.
 #include <Arduino.h>
 
 #include <stdio.h>
 
 #include "config.h"
+#include "display.h"
 #include "link.h"
 #include "serial_log.h"
 
@@ -53,6 +54,7 @@ void setup() {
     petbot::logBegin();
     petbot::logLine("%s", "");
     petbot::logLine("PetBot firmware v0.1.0 - boot OK");
+    petbot::display::begin();  // before the link, so its queue exists for the first MOOD/ANIM
     petbot::link::begin();
     printHelp();
 }

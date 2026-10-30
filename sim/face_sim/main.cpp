@@ -238,13 +238,106 @@ bool savePng(lv_obj_t* obj, const std::string& path) {
     return true;
 }
 
+// ---- checks (run in --snapshot mode, so CI enforces them) ----
+
+// Mean x of the cyan eye pixels in a full render of `obj`.
+bool eyesCenterX(lv_obj_t* obj, float& cx) {
+    lv_draw_buf_t* buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_ARGB8888);
+    if (buf == nullptr) return false;
+    double sum = 0;
+    size_t count = 0;
+    for (uint32_t y = 0; y < buf->header.h; ++y) {
+        const uint8_t* row = buf->data + y * buf->header.stride;  // B, G, R, A
+        for (uint32_t x = 0; x < buf->header.w; ++x) {
+            if (row[x * 4 + 1] > 128 && row[x * 4 + 0] > 128) {
+                sum += x;
+                ++count;
+            }
+        }
+    }
+    lv_draw_buf_destroy(buf);
+    if (count == 0) return false;
+    cx = static_cast<float>(sum / count);
+    return true;
+}
+
+// ADR 0014: left/right is the robot's frame, so *_left moves the eyes toward screen-right.
+bool checkDirections(lv_obj_t* face) {
+    float neutral;
+    face_tick(2000);
+    if (!eyesCenterX(face, neutral)) return false;
+    const struct {
+        const char* anim;
+        uint32_t at;
+        float sign;  // +1: must move toward screen-right
+    } cases[] = {{"look_left", FACE_LOOK_MS / 2, +1.0f},
+                 {"look_right", FACE_LOOK_MS / 2, -1.0f},
+                 {"wave_left", FACE_WAVE_MS / 2, +1.0f},
+                 {"wave_right", FACE_WAVE_MS / 2, -1.0f}};
+    bool ok = true;
+    for (const auto& c : cases) {
+        face_play_anim(c.anim);
+        face_tick(c.at);
+        float x;
+        const bool measured = eyesCenterX(face, x);
+        const bool pass = measured && (x - neutral) * c.sign >= 10.0f;
+        printf("[check] %-10s eyes x=%.1f (neutral %.1f) -> %s: %s\n", c.anim, x, neutral,
+               c.sign > 0 ? "screen-right" : "screen-left", pass ? "OK" : "FAIL");
+        ok &= pass;
+        face_tick(2000);
+    }
+    return ok;
+}
+
+// The face only invalidates changed eye areas. Refresh the real display every frame and
+// compare its accumulated framebuffer with a full render: any stale pixel is a bug.
+bool checkPartialRedraw(lv_display_t* disp, lv_obj_t* face) {
+    face_set_idle(true);
+    const char* moods[] = {"happy", "sad", "angry", "sleepy", "curious", "surprised", "neutral"};
+    const char* anims[] = {"look_left", "wave_right", "blink", "look_right", "wave_left"};
+    size_t worst = 0;
+    int compared = 0;
+    for (int frame = 0; frame < 400; ++frame) {
+        if (frame % 50 == 0) face_set_mood(moods[(frame / 50) % 7], frame % 100 ? 60 : 100);
+        if (frame % 70 == 35) face_play_anim(anims[(frame / 70) % 5]);
+        face_tick(33);
+        lv_refr_now(disp);
+        if (frame % 5 != 4) continue;
+        lv_draw_buf_t* full = lv_snapshot_take(face, LV_COLOR_FORMAT_ARGB8888);
+        lv_draw_buf_t* shown = lv_display_get_buf_active(disp);
+        if (full == nullptr || shown == nullptr) return false;
+        const uint32_t bpp = lv_color_format_get_size(lv_display_get_color_format(disp));
+        size_t diff = 0;
+        for (uint32_t y = 0; y < full->header.h; ++y) {
+            const uint8_t* a = full->data + y * full->header.stride;
+            const uint8_t* b = shown->data + y * shown->header.stride;
+            for (uint32_t x = 0; x < full->header.w; ++x) {
+                for (int ch = 0; ch < 3; ++ch) {
+                    if (abs(a[x * 4 + ch] - b[x * bpp + ch]) > 2) {
+                        ++diff;
+                        break;
+                    }
+                }
+            }
+        }
+        lv_draw_buf_destroy(full);
+        if (diff > worst) worst = diff;
+        ++compared;
+    }
+    face_set_idle(false);
+    const bool pass = worst == 0;
+    printf("[check] partial redraw: %d frames compared, worst %zu stale pixels: %s\n", compared,
+           worst, pass ? "OK" : "FAIL");
+    return pass;
+}
+
 // Settle on a mood with no transition in progress.
 void settle(const char* mood, uint8_t intensity) {
     face_set_mood(mood, intensity);
     face_tick(FACE_MOOD_TRANSITION_MS + 1);
 }
 
-int runSnapshots(lv_obj_t* face, const std::string& dir) {
+int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
         fprintf(stderr, "error: cannot create %s: %s\n", dir.c_str(), strerror(errno));
         return 1;
@@ -320,6 +413,9 @@ int runSnapshots(lv_obj_t* face, const std::string& dir) {
         ok &= savePng(face, dir + name);
         face_tick(2000);
     }
+    face_tick(2000);
+    ok &= checkDirections(face);
+    ok &= checkPartialRedraw(disp, face);
     return ok ? 0 : 1;
 }
 
@@ -357,7 +453,7 @@ int main(int argc, char** argv) {
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), 0);
     lv_obj_t* face = face_init(lv_screen_active());
 
-    if (snapshotDir != nullptr) return runSnapshots(face, snapshotDir);
+    if (snapshotDir != nullptr) return runSnapshots(disp, face, snapshotDir);
 
     if (port != nullptr && !openPort(port)) return 1;
 

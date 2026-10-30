@@ -1,9 +1,10 @@
-// UART link task. For now received MOOD/ANIM commands are only logged to USB serial.
+// UART link task: logs received MOOD/ANIM and hands them to the face task (display.h).
 #include "link.h"
 
 #include <Arduino.h>
 
 #include "config.h"
+#include "display.h"
 #include "protocol.h"
 #include "serial_log.h"
 
@@ -51,6 +52,7 @@ void handleLine(const char* line, size_t len) {
     char buf[proto::kMaxLineBytes + 1];
     const size_t n = proto::encode(msg, buf, sizeof(buf));
     logLine("[link] rx %.*s", static_cast<int>(n > 0 ? n - 1 : 0), buf);  // without '\n'
+    display::post(msg);  // queued; LVGL is only touched by the face task
 }
 
 void rxTask(void*) {
