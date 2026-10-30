@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <string>
+#include <vector>
 
 #include <SDL2/SDL.h>
 
@@ -192,20 +193,24 @@ void printKeys() {
     printf(" (intensity 100)  q=quit\n");
 }
 
-// ---- snapshots ----
+// ---- images ----
 
-bool savePng(lv_obj_t* obj, const std::string& path) {
+struct Image {
+    uint32_t w = 0, h = 0;
+    std::string rgba;  // w * h * 4 bytes
+};
+
+// Full render of `obj` (independent of what's on the display).
+bool capture(lv_obj_t* obj, Image& img) {
     lv_draw_buf_t* buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_ARGB8888);
-    if (buf == nullptr) {
-        fprintf(stderr, "error: snapshot failed for %s\n", path.c_str());
-        return false;
-    }
-    const uint32_t w = buf->header.w, h = buf->header.h, stride = buf->header.stride;
-    std::string rgba(static_cast<size_t>(w) * h * 4, '\0');
-    for (uint32_t y = 0; y < h; ++y) {
-        const uint8_t* src = buf->data + y * stride;  // B, G, R, A
-        for (uint32_t x = 0; x < w; ++x) {
-            char* dst = &rgba[(static_cast<size_t>(y) * w + x) * 4];
+    if (buf == nullptr) return false;
+    img.w = buf->header.w;
+    img.h = buf->header.h;
+    img.rgba.assign(static_cast<size_t>(img.w) * img.h * 4, '\0');
+    for (uint32_t y = 0; y < img.h; ++y) {
+        const uint8_t* src = buf->data + y * buf->header.stride;  // B, G, R, A
+        for (uint32_t x = 0; x < img.w; ++x) {
+            char* dst = &img.rgba[(static_cast<size_t>(y) * img.w + x) * 4];
             dst[0] = static_cast<char>(src[x * 4 + 2]);
             dst[1] = static_cast<char>(src[x * 4 + 1]);
             dst[2] = static_cast<char>(src[x * 4 + 0]);
@@ -213,10 +218,14 @@ bool savePng(lv_obj_t* obj, const std::string& path) {
         }
     }
     lv_draw_buf_destroy(buf);
+    return true;
+}
+
+bool writePng(const Image& img, const std::string& path) {
     unsigned char* png = nullptr;
     size_t pngSize = 0;
     const unsigned err = lodepng_encode32(
-        &png, &pngSize, reinterpret_cast<const unsigned char*>(rgba.data()), w, h);
+        &png, &pngSize, reinterpret_cast<const unsigned char*>(img.rgba.data()), img.w, img.h);
     if (err != 0) {
         fprintf(stderr, "error: encoding %s: %s\n", path.c_str(), lodepng_error_text(err));
         lv_free(png);
@@ -224,13 +233,9 @@ bool savePng(lv_obj_t* obj, const std::string& path) {
     }
     FILE* f = fopen(path.c_str(), "wb");
     const bool written = f != nullptr && fwrite(png, 1, pngSize, f) == pngSize;
-    if (f != nullptr && fclose(f) != 0) {
-        fprintf(stderr, "error: closing %s: %s\n", path.c_str(), strerror(errno));
-        lv_free(png);
-        return false;
-    }
+    const bool closed = f != nullptr && fclose(f) == 0;
     lv_free(png);
-    if (!written) {
+    if (!written || !closed) {
         fprintf(stderr, "error: writing %s: %s\n", path.c_str(), strerror(errno));
         return false;
     }
@@ -238,24 +243,57 @@ bool savePng(lv_obj_t* obj, const std::string& path) {
     return true;
 }
 
+// Capture the face with a small caption in its bottom-left corner (for sheets and strips).
+bool captureLabeled(lv_obj_t* face, const char* caption, Image& img) {
+    lv_obj_t* label = lv_label_create(face);
+    lv_label_set_text(label, caption);
+    lv_obj_set_style_text_color(label, lv_color_hex(0x9AA0A6), 0);
+    lv_obj_align(label, LV_ALIGN_BOTTOM_LEFT, 6, -4);
+    lv_obj_update_layout(label);
+    const bool ok = capture(face, img);
+    lv_obj_delete(label);
+    return ok;
+}
+
+// Tile images into one sheet, `cols` per row, with a 4 px gray gutter.
+Image tile(const std::vector<Image>& cells, uint32_t cols) {
+    const uint32_t gap = 4, cw = cells[0].w, ch = cells[0].h;
+    const uint32_t rows = (static_cast<uint32_t>(cells.size()) + cols - 1) / cols;
+    Image out;
+    out.w = cols * cw + (cols + 1) * gap;
+    out.h = rows * ch + (rows + 1) * gap;
+    out.rgba.assign(static_cast<size_t>(out.w) * out.h * 4, '\0');
+    for (size_t i = 0; i < out.rgba.size(); i += 4) {
+        out.rgba[i] = out.rgba[i + 1] = out.rgba[i + 2] = static_cast<char>(0x30);
+        out.rgba[i + 3] = static_cast<char>(0xFF);
+    }
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const uint32_t x0 = gap + (i % cols) * (cw + gap), y0 = gap + (i / cols) * (ch + gap);
+        for (uint32_t y = 0; y < ch; ++y) {
+            memcpy(&out.rgba[((y0 + y) * static_cast<size_t>(out.w) + x0) * 4],
+                   &cells[i].rgba[static_cast<size_t>(y) * cw * 4], static_cast<size_t>(cw) * 4);
+        }
+    }
+    return out;
+}
+
 // ---- checks (run in --snapshot mode, so CI enforces them) ----
 
 // Mean x of the cyan eye pixels in a full render of `obj`.
 bool eyesCenterX(lv_obj_t* obj, float& cx) {
-    lv_draw_buf_t* buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_ARGB8888);
-    if (buf == nullptr) return false;
+    Image img;
+    if (!capture(obj, img)) return false;
     double sum = 0;
     size_t count = 0;
-    for (uint32_t y = 0; y < buf->header.h; ++y) {
-        const uint8_t* row = buf->data + y * buf->header.stride;  // B, G, R, A
-        for (uint32_t x = 0; x < buf->header.w; ++x) {
-            if (row[x * 4 + 1] > 128 && row[x * 4 + 0] > 128) {
+    for (uint32_t y = 0; y < img.h; ++y) {
+        for (uint32_t x = 0; x < img.w; ++x) {
+            const uint8_t* px = reinterpret_cast<const uint8_t*>(&img.rgba[(y * img.w + x) * 4]);
+            if (px[1] > 128 && px[2] > 128 && px[0] < 100) {  // cyan: G and B high, R low
                 sum += x;
                 ++count;
             }
         }
     }
-    lv_draw_buf_destroy(buf);
     if (count == 0) return false;
     cx = static_cast<float>(sum / count);
     return true;
@@ -289,17 +327,35 @@ bool checkDirections(lv_obj_t* face) {
     return ok;
 }
 
-// The face only invalidates changed eye areas. Refresh the real display every frame and
+// Every anim in the protocol's known list must be implemented by the face.
+bool checkAllAnimsImplemented() {
+    bool ok = true;
+    for (size_t i = 0; i < proto::animCount(); ++i) {
+        if (!face_play_anim(proto::animName(i))) {
+            printf("[check] anim %s: NOT IMPLEMENTED\n", proto::animName(i));
+            ok = false;
+        }
+    }
+    face_tick(5000);
+    printf("[check] all %u known anims implemented: %s\n",
+           static_cast<unsigned>(proto::animCount()), ok ? "OK" : "FAIL");
+    return ok;
+}
+
+// The face only invalidates changed areas. Refresh the real display every frame and
 // compare its accumulated framebuffer with a full render: any stale pixel is a bug.
-bool checkPartialRedraw(lv_display_t* disp, lv_obj_t* face) {
+bool checkPartialRedraw(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     face_set_idle(true);
     const char* moods[] = {"happy", "sad", "angry", "sleepy", "curious", "surprised", "neutral"};
-    const char* anims[] = {"look_left", "wave_right", "blink", "look_right", "wave_left"};
+    std::vector<const char*> anims;
+    for (size_t i = 0; i < proto::animCount(); ++i) anims.push_back(proto::animName(i));
     size_t worst = 0;
-    int compared = 0;
-    for (int frame = 0; frame < 400; ++frame) {
+    int compared = 0, worst_frame = -1;
+    lv_area_t worst_area = {0, 0, 0, 0};
+    Image worst_full, worst_shown;
+    for (int frame = 0; frame < 900; ++frame) {
         if (frame % 50 == 0) face_set_mood(moods[(frame / 50) % 7], frame % 100 ? 60 : 100);
-        if (frame % 70 == 35) face_play_anim(anims[(frame / 70) % 5]);
+        if (frame % 30 == 15) face_play_anim(anims[(frame / 30) % anims.size()]);
         face_tick(33);
         lv_refr_now(disp);
         if (frame % 5 != 4) continue;
@@ -308,33 +364,94 @@ bool checkPartialRedraw(lv_display_t* disp, lv_obj_t* face) {
         if (full == nullptr || shown == nullptr) return false;
         const uint32_t bpp = lv_color_format_get_size(lv_display_get_color_format(disp));
         size_t diff = 0;
+        lv_area_t area = {INT32_MAX, INT32_MAX, -1, -1};
         for (uint32_t y = 0; y < full->header.h; ++y) {
             const uint8_t* a = full->data + y * full->header.stride;
             const uint8_t* b = shown->data + y * shown->header.stride;
             for (uint32_t x = 0; x < full->header.w; ++x) {
                 for (int ch = 0; ch < 3; ++ch) {
-                    if (abs(a[x * 4 + ch] - b[x * bpp + ch]) > 2) {
+                    // Translucent layers (blush) blend with slightly different rounding into
+                    // the ARGB8888 snapshot and the XRGB8888 display: allow a few levels. A
+                    // stale pixel differs by tens or hundreds.
+                    if (abs(a[x * 4 + ch] - b[x * bpp + ch]) > 8) {
                         ++diff;
+                        area.x1 = LV_MIN(area.x1, (int32_t)x);
+                        area.y1 = LV_MIN(area.y1, (int32_t)y);
+                        area.x2 = LV_MAX(area.x2, (int32_t)x);
+                        area.y2 = LV_MAX(area.y2, (int32_t)y);
                         break;
                     }
                 }
             }
         }
+        if (diff > worst) {
+            worst = diff;
+            worst_frame = frame;
+            worst_area = area;
+            capture(face, worst_full);  // keep both images for the failure report
+            worst_shown = worst_full;
+            for (uint32_t y = 0; y < worst_shown.h; ++y) {
+                const uint8_t* b = shown->data + y * shown->header.stride;
+                for (uint32_t x = 0; x < worst_shown.w; ++x) {
+                    char* d = &worst_shown.rgba[(static_cast<size_t>(y) * worst_shown.w + x) * 4];
+                    d[0] = static_cast<char>(b[x * bpp + 2]);
+                    d[1] = static_cast<char>(b[x * bpp + 1]);
+                    d[2] = static_cast<char>(b[x * bpp + 0]);
+                    d[3] = static_cast<char>(0xFF);
+                }
+            }
+        }
         lv_draw_buf_destroy(full);
-        if (diff > worst) worst = diff;
         ++compared;
     }
     face_set_idle(false);
     const bool pass = worst == 0;
     printf("[check] partial redraw: %d frames compared, worst %zu stale pixels: %s\n", compared,
            worst, pass ? "OK" : "FAIL");
+    if (!pass) {
+        printf("[check]   worst at frame %d, area x %d-%d y %d-%d (see redraw_*.png)\n",
+               worst_frame, (int)worst_area.x1, (int)worst_area.x2, (int)worst_area.y1,
+               (int)worst_area.y2);
+        writePng(worst_full, dir + "/redraw_expected.png");
+        writePng(worst_shown, dir + "/redraw_shown.png");
+    }
     return pass;
 }
 
-// Settle on a mood with no transition in progress.
+// ---- snapshots ----
+
+// Settle on a mood: long enough for every spring to come to rest.
 void settle(const char* mood, uint8_t intensity) {
     face_set_mood(mood, intensity);
-    face_tick(FACE_MOOD_TRANSITION_MS + 1);
+    face_tick(FACE_MOOD_SETTLE_MS * 3);
+}
+
+void clearFx() {
+    face_show_glyph(FACE_GLYPH_NONE, 0);
+    face_tick(6000);  // glyph pops back, accessories finish
+}
+
+bool saveFace(lv_obj_t* face, const std::string& path) {
+    Image img;
+    return capture(face, img) && writePng(img, path);
+}
+
+// A strip of labeled frames at fixed times after `start` runs (one spring move).
+bool saveStrip(lv_obj_t* face, const std::string& path, const char* title, void (*start)()) {
+    const uint32_t times[] = {0, 40, 80, 120, 200};
+    std::vector<Image> cells;
+    uint32_t done = 0;
+    start();
+    for (uint32_t t : times) {
+        face_tick(t - done);
+        done = t;
+        char caption[64];
+        snprintf(caption, sizeof(caption), "%s  %u ms", title, static_cast<unsigned>(t));
+        Image img;
+        if (!captureLabeled(face, caption, img)) return false;
+        cells.push_back(img);
+    }
+    return writePng(tile(cells, 5), path);
 }
 
 int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
@@ -346,6 +463,7 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     face_tick(1000);
     bool ok = true;
     char name[96];
+    std::vector<Image> sheet;
 
     // Every protocol mood must exist in the face (catches drift between the two lists).
     for (size_t m = 0; m < static_cast<size_t>(proto::MoodId::kCount); ++m) {
@@ -356,14 +474,54 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
                 fprintf(stderr, "error: face has no mood '%s'\n", mood);
                 return 1;
             }
-            face_tick(FACE_MOOD_TRANSITION_MS + 1);
+            face_tick(FACE_MOOD_SETTLE_MS * 3);
             snprintf(name, sizeof(name), "/mood_%u_%s_%03u.png", static_cast<unsigned>(m + 1),
                      mood, level);
-            ok &= savePng(face, dir + name);
+            ok &= saveFace(face, dir + name);
+            if (level == 100) {
+                Image img;
+                snprintf(name, sizeof(name), "mood %s", mood);
+                ok &= captureLabeled(face, name, img);
+                sheet.push_back(img);
+            }
         }
     }
 
-    // Mid-transition frames.
+    // Glyph eyes, settled after their pop.
+    settle("neutral", 100);
+    for (int g = FACE_GLYPH_HEART; g < FACE_GLYPH_COUNT; ++g) {
+        face_show_glyph(static_cast<face_glyph_t>(g), 0);
+        face_tick(1500);
+        snprintf(name, sizeof(name), "/glyph_%s.png", face_glyph_name(static_cast<face_glyph_t>(g)));
+        ok &= saveFace(face, dir + name);
+        Image img;
+        snprintf(name, sizeof(name), "glyph %s", face_glyph_name(static_cast<face_glyph_t>(g)));
+        ok &= captureLabeled(face, name, img);
+        sheet.push_back(img);
+    }
+    clearFx();
+
+    // Accessories, at a representative moment of their life.
+    const float when[FACE_ACC_COUNT] = {0.4f, 0.55f, 0.5f, 0.55f, 0.45f, 0.35f, 0.5f};
+    const uint32_t life[FACE_ACC_COUNT] = {FACE_BLUSH_MS,    FACE_TEAR_MS,    FACE_SWEAT_MS,
+                                           FACE_ZZZ_MS,      FACE_QUESTION_MS, FACE_EXCLAIM_MS,
+                                           FACE_MUSIC_MS};
+    for (int a = 0; a < FACE_ACC_COUNT; ++a) {
+        const face_accessory_t acc = static_cast<face_accessory_t>(a);
+        settle(acc == FACE_ACC_ZZZ ? "sleepy" : "neutral", 100);
+        face_show_accessory(acc);
+        face_tick(static_cast<uint32_t>(life[a] * when[a]));
+        snprintf(name, sizeof(name), "/accessory_%s.png", face_accessory_name(acc));
+        ok &= saveFace(face, dir + name);
+        Image img;
+        snprintf(name, sizeof(name), "accessory %s", face_accessory_name(acc));
+        ok &= captureLabeled(face, name, img);
+        sheet.push_back(img);
+        clearFx();
+    }
+    ok &= writePng(tile(sheet, 5), dir + "/contact_sheet.png");
+
+    // Mid-transition frames (springs: these overshoot and settle).
     const struct {
         const char* from;
         const char* to;
@@ -372,15 +530,23 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
         settle(tr.from, 100);
         face_set_mood(tr.to, 100);
         uint32_t done = 0;
-        const unsigned percents[] = {25, 50, 75};
-        for (unsigned pct : percents) {
-            const uint32_t at = FACE_MOOD_TRANSITION_MS * pct / 100;
+        const unsigned at_ms[] = {80, 160, 320};
+        for (unsigned at : at_ms) {
             face_tick(at - done);
             done = at;
-            snprintf(name, sizeof(name), "/transition_%s_to_%s_%02u.png", tr.from, tr.to, pct);
-            ok &= savePng(face, dir + name);
+            snprintf(name, sizeof(name), "/transition_%s_to_%s_%03ums.png", tr.from, tr.to, at);
+            ok &= saveFace(face, dir + name);
         }
     }
+
+    // Motion strips at 0/40/80/120/200 ms: one spring transition, one saccade.
+    settle("neutral", 100);
+    ok &= saveStrip(face, dir + "/strip_spring_neutral_to_surprised.png", "neutral -> surprised",
+                    [] { face_set_mood("surprised", 100); });
+    settle("neutral", 100);
+    ok &= saveStrip(face, dir + "/strip_saccade_look_left.png", "saccade look_left",
+                    [] { face_play_anim("look_left"); });
+    face_tick(3000);
 
     // Blink: closing, closed, opening.
     settle("neutral", 100);
@@ -394,11 +560,11 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     for (const auto& b : blink) {
         face_tick(b.step);
         snprintf(name, sizeof(name), "/blink_%s.png", b.label);
-        ok &= savePng(face, dir + name);
+        ok &= saveFace(face, dir + name);
     }
     face_tick(1000);
 
-    // Animations at their peak.
+    // Look/wave animations at their peak.
     const struct {
         const char* anim;
         uint32_t at;
@@ -410,12 +576,13 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
         face_play_anim(a.anim);
         face_tick(a.at);
         snprintf(name, sizeof(name), "/anim_%s.png", a.anim);
-        ok &= savePng(face, dir + name);
+        ok &= saveFace(face, dir + name);
         face_tick(2000);
     }
     face_tick(2000);
+    ok &= checkAllAnimsImplemented();
     ok &= checkDirections(face);
-    ok &= checkPartialRedraw(disp, face);
+    ok &= checkPartialRedraw(disp, face, dir);
     return ok ? 0 : 1;
 }
 
