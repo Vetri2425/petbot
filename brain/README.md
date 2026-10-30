@@ -10,7 +10,6 @@ Plain Python, no ROS 2. Runtime dependency: `pyserial`.
 | `protocol.py` | Message types, allowed names, `parse_line()` / `encode()` (pure, no I/O) |
 | `link.py` | `SerialLink`: pyserial wrapper, skips invalid lines, raises `LinkClosed` on disconnect |
 | `mood/` | Mood engine: feelings and needs that build up and fade, habituation, randomness |
-| `reactions.py` | Old fixed reaction table (no longer used by the CLI) |
 | `__main__.py` | CLI entry point (runs the mood engine) |
 
 All mood tuning lives in [`config/personality.toml`](config/personality.toml): baselines, half-lives,
