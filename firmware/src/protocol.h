@@ -24,7 +24,7 @@ const uint8_t kMaxIntensity = 100;  // hundredths: 100 is "1.00" on the wire
 // Known animations (v1). The wire accepts any [a-z0-9_]+ name; this is the supported set.
 #define PETBOT_ANIMS(X)                                                                        \
     X(blink) X(look_left) X(look_right) X(wave_left) X(wave_right) X(hearts) X(stars) X(dizzy) \
-    X(zzz) X(tear) X(blush) X(sweat) X(question) X(exclaim) X(music)
+    X(zzz) X(tear) X(blush) X(sweat) X(question) X(exclaim) X(music) X(scared) X(idea)
 
 #define PETBOT_ENUM_ITEM(name) name,
 #define PETBOT_SOURCE_ENUM_ITEM(name, details) name,

@@ -340,7 +340,7 @@ void test_names_match_protocol_md() {
 }
 
 void test_known_anims() {
-    TEST_ASSERT_EQUAL(15, animCount());
+    TEST_ASSERT_EQUAL(17, animCount());
     for (size_t i = 0; i < animCount(); ++i) {
         Message msg;
         TEST_ASSERT_TRUE(makeAnim(animName(i), msg));

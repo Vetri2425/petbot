@@ -18,19 +18,18 @@ typedef struct {
 
 typedef struct {
     const char * name;
-    face_line_expr_t normal;
-    face_line_expr_t strong; /* shown at/above strong_at intensity */
-    uint8_t strong_at;       /* 101: never */
-} line_mood_t;
+    face_emoji_t mild;   /* below FACE_EMOJI_INTENSITY */
+    face_emoji_t strong; /* at or above it (calm moods: same as mild) */
+} emoji_mood_t;
 
-static const line_mood_t k_line_moods[] = {
-    {"neutral", FACE_LINE_NEUTRAL, FACE_LINE_NEUTRAL, 101},
-    {"happy", FACE_LINE_HAPPY, FACE_LINE_LAUGH, FACE_LINE_LAUGH_INTENSITY},
-    {"sad", FACE_LINE_SAD, FACE_LINE_SAD, 101},
-    {"angry", FACE_LINE_ANGRY, FACE_LINE_FURIOUS, FACE_LINE_FURIOUS_INTENSITY},
-    {"sleepy", FACE_LINE_SLEEPY, FACE_LINE_SLEEPY, 101},
-    {"curious", FACE_LINE_CURIOUS, FACE_LINE_CURIOUS, 101},
-    {"surprised", FACE_LINE_SURPRISED, FACE_LINE_SURPRISED, 101},
+static const emoji_mood_t k_emoji_moods[] = {
+    {"neutral", FACE_EMOJI_CALM, FACE_EMOJI_CALM},
+    {"happy", FACE_EMOJI_MILD_HAPPY, FACE_EMOJI_HAPPY},
+    {"sad", FACE_EMOJI_MILD_SAD, FACE_EMOJI_SAD},
+    {"angry", FACE_EMOJI_MILD_ANGRY, FACE_EMOJI_ANGRY},
+    {"sleepy", FACE_EMOJI_SLEEPY, FACE_EMOJI_SLEEPY},
+    {"curious", FACE_EMOJI_CURIOUS, FACE_EMOJI_CURIOUS},
+    {"surprised", FACE_EMOJI_MILD_SURPRISED, FACE_EMOJI_SURPRISED},
 };
 
 static const mood_def_t k_moods[] = {
@@ -42,13 +41,13 @@ static const mood_def_t k_moods[] = {
 #define MOOD_COUNT (sizeof(k_moods) / sizeof(k_moods[0]))
 
 static const char * const k_glyph_names[FACE_GLYPH_COUNT] = {
-    "none", "heart", "star", "spiral", "x", "closed",
+    "none", "heart", "star", "spiral", "x", "closed", "bulb",
 };
 static const char * const k_acc_names[FACE_ACC_COUNT] = {
     "blush", "tear", "sweat", "zzz", "question", "exclaim", "music",
 };
 static const uint32_t k_acc_ms[FACE_ACC_COUNT] = {
-    FACE_BLUSH_MS, FACE_TEAR_MS, FACE_SWEAT_MS, FACE_ZZZ_MS,
+    FACE_BLUSH_MS, FACE_TEARS_MS, FACE_SWEAT_MS, FACE_ZZZ_MS,
     FACE_QUESTION_MS, FACE_EXCLAIM_MS, FACE_MUSIC_MS,
 };
 
@@ -67,9 +66,15 @@ static struct {
     uint32_t rng;
     face_style_t style;
 
-    /* line style: shapes swap with the glyph pop; brow and mouth amounts are springs */
-    face_line_expr_t line_want, line_shown;
-    spring_t brow_tilt, brow_lift, mouth_scale;
+    /* emoji style: shapes swap with the glyph pop; brow and mouth amounts are springs */
+    face_emoji_t emoji_mood;  /* face for the current mood */
+    face_emoji_t emoji_want;  /* emoji_mood, or a temporary face (scared) */
+    face_emoji_t emoji_shown; /* lags emoji_want until the pop swaps it */
+    uint32_t override_ms;     /* > 0 while a temporary face shows */
+    bool tears_loop;          /* sad enough to cry */
+    uint32_t tears_t;         /* ms, drives the drops down the streams */
+    spring_t brow_tilt, brow_lift, mouth_scale, mouth_side;
+    float mouth_dir; /* +1 / -1: the side the eyes last looked toward (screen x) */
 
     face_expr_t target; /* mood expression scaled by intensity */
     const char * mood;
@@ -227,12 +232,9 @@ static void eye_targets(int side, float out[P_COUNT])
     const float grow = 1.0f + (robot_left ? e->grow_left : e->grow_right);
     out[P_W] = FACE_EYE_W * (1.0f + e->grow_w) * grow;
     out[P_H] = FACE_EYE_H * (1.0f + e->grow_h) * grow;
-    if(s.style == FACE_STYLE_LINE) {
-        const uint8_t kind = robot_left ? s.line_shown.eye_left : s.line_shown.eye_right;
-        out[P_W] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_W
-                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_W;
-        out[P_H] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_H
-                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_H;
+    if(s.style == FACE_STYLE_EMOJI && s.emoji_shown.eyes != FACE_EYE_BLOB) {
+        out[P_W] = FACE_EMOJI_EYE_W; /* line-art eyes use a fixed box */
+        out[P_H] = FACE_EMOJI_EYE_H;
     }
     out[P_DY] = e->dy + (robot_left ? -e->tilt : e->tilt);
     out[P_ROUND] = e->round;
@@ -242,17 +244,16 @@ static void eye_targets(int side, float out[P_COUNT])
     out[P_CHEEK] = e->cheek;
 }
 
-static bool same_line_shapes(const face_line_expr_t * a, const face_line_expr_t * b)
+static bool same_shapes(const face_emoji_t * a, const face_emoji_t * b)
 {
-    return a->eye_right == b->eye_right && a->eye_left == b->eye_left && a->mouth == b->mouth &&
-           a->brows == b->brows;
+    return a->eyes == b->eyes && a->mouth == b->mouth && a->brows == b->brows;
 }
 
-/* Shown content (glyph, and the line shapes in line style) differs from what's wanted. */
+/* Shown content (glyph, and the emoji shapes in emoji style) differs from what's wanted. */
 static bool content_pending(void)
 {
     if(s.glyph_want != s.glyph_shown) return true;
-    return s.style == FACE_STYLE_LINE && !same_line_shapes(&s.line_want, &s.line_shown);
+    return s.style == FACE_STYLE_EMOJI && !same_shapes(&s.emoji_want, &s.emoji_shown);
 }
 
 static void step_springs(float dt)
@@ -271,9 +272,13 @@ static void step_springs(float dt)
     spring_step(&s.squash, 0.0f, FACE_SPRING_SQUASH_K, FACE_SPRING_SQUASH_C, dt);
     spring_step(&s.glyph_scale, content_pending() ? 0.0f : 1.0f, FACE_SPRING_GLYPH_K,
                 FACE_SPRING_GLYPH_C, dt);
-    spring_step(&s.brow_tilt, s.line_want.brow_tilt, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
-    spring_step(&s.brow_lift, s.line_want.brow_lift, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
-    spring_step(&s.mouth_scale, s.line_want.mouth_scale, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C,
+    spring_step(&s.brow_tilt, s.emoji_want.brow_tilt, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.brow_lift, s.emoji_want.brow_lift, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    if(s.dest_x > 2.0f) s.mouth_dir = 1.0f;
+    if(s.dest_x < -2.0f) s.mouth_dir = -1.0f;
+    spring_step(&s.mouth_side, s.emoji_want.mouth_side * s.mouth_dir, FACE_SPRING_SHAPE_K,
+                FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.mouth_scale, s.emoji_want.mouth_scale, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C,
                 dt);
 }
 
@@ -309,65 +314,67 @@ static void update_glyph(uint32_t dt)
     /* The old glyph shrinks away; once small, swap and pop the new one in. */
     if(content_pending() && s.glyph_scale.x <= FACE_GLYPH_SWAP_BELOW) {
         s.glyph_shown = s.glyph_want;
-        s.line_shown = s.line_want;
+        s.emoji_shown = s.emoji_want;
     }
 }
 
 /* ---- frame geometry ---- */
 
-/* The mouth (and brows) a glyph shows with, in line style. */
+/* The mouth a glyph shows with, in emoji style. */
 static uint8_t glyph_mouth(face_glyph_t glyph, uint8_t mood_mouth)
 {
     switch(glyph) {
         case FACE_GLYPH_HEART: return FACE_MOUTH_SMILE;
-        case FACE_GLYPH_STAR: return FACE_MOUTH_GRIN;
-        case FACE_GLYPH_SPIRAL: return FACE_MOUTH_WAVY;
+        case FACE_GLYPH_STAR: return FACE_MOUTH_OPEN_SMILE;
+        case FACE_GLYPH_SPIRAL: return FACE_MOUTH_WOBBLY;
         case FACE_GLYPH_X: return FACE_MOUTH_FLAT;
-        case FACE_GLYPH_CLOSED: return FACE_MOUTH_DOT;
+        case FACE_GLYPH_CLOSED: return FACE_MOUTH_NONE;
+        case FACE_GLYPH_BULB: return FACE_MOUTH_O;
         default: return mood_mouth;
     }
 }
 
-static void build_line_render(line_render_t * l, float hop_dy)
+static void build_emoji_render(emoji_render_t * l, float hop_dy)
 {
-    const face_line_expr_t * x = &s.line_shown;
-    l->eye[0] = x->eye_right; /* screen left = the robot's right (ADR 0014) */
-    l->eye[1] = x->eye_left;
+    const face_emoji_t * x = &s.emoji_shown;
     const bool glyph = s.glyph_shown != FACE_GLYPH_NONE;
+    l->eyes = x->eyes;
     l->mouth = glyph_mouth(s.glyph_shown, x->mouth);
-    l->brow_on[0] = !glyph && x->brows == FACE_BROWS_BOTH;
-    l->brow_on[1] = !glyph && (x->brows == FACE_BROWS_BOTH || x->brows == FACE_BROWS_LEFT);
+    l->brows = !glyph && x->brows;
     l->brow_tilt = s.brow_tilt.x;
     l->brow_lift = s.brow_lift.x;
     l->mouth_scale = fmaxf(0.0f, s.mouth_scale.x);
     const float dy = (s.eye[0][P_DY].x + s.eye[1][P_DY].x) / 2.0f;
-    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_LINE_MOUTH_GAZE;
-    l->mouth_y = FACE_SCREEN_H / 2.0f + FACE_LINE_MOUTH_Y + dy * 0.5f +
-                 s.gaze_y.x * FACE_LINE_MOUTH_GAZE + hop_dy;
+    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_EMOJI_MOUTH_GAZE + s.mouth_side.x;
+    l->mouth_y = FACE_SCREEN_H / 2.0f + FACE_EMOJI_MOUTH_Y + dy * 0.5f +
+                 s.gaze_y.x * FACE_EMOJI_MOUTH_GAZE + hop_dy;
 }
 
 static void build_render(float blink, float breath, float hop_dy)
 {
     face_render_t * r = &s.render;
-    const bool line = s.style == FACE_STYLE_LINE;
+    const bool emoji = s.style == FACE_STYLE_EMOJI;
+    /* Line-art eyes: no lids, a blink flattens them. Filled (blob) eyes keep their lids. */
+    const bool line = emoji && s.emoji_shown.eyes != FACE_EYE_BLOB;
     r->style = s.style;
-    if(line) {
-        build_line_render(&r->line, hop_dy);
+    if(emoji) {
+        build_emoji_render(&r->emoji, hop_dy);
     }
     else {
-        memset(&r->line, 0, sizeof(r->line));
+        memset(&r->emoji, 0, sizeof(r->emoji));
     }
+    r->tears_phase = (float)(s.tears_t % FACE_TEARS_PERIOD_MS) / FACE_TEARS_PERIOD_MS;
     const float squash = clampf(s.squash.x, -FACE_SQUASH_MAX, FACE_SQUASH_MAX);
     for(int side = 0; side < 2; ++side) {
         const spring_t * e = s.eye[side];
         eye_geom_t * g = &r->eyes[side];
         const float dir = side ? 1.0f : -1.0f;
-        const float spacing = line ? FACE_LINE_EYE_SPACING : FACE_EYE_SPACING;
+        const float spacing = FACE_EYE_SPACING;
         g->w = fmaxf(4.0f, e[P_W].x * (1.0f + squash) * (1.0f + FACE_BLINK_SQUASH * blink));
         g->h = fmaxf(4.0f, e[P_H].x * (1.0f - squash) * (1.0f + FACE_BREATH_SCALE * breath));
-        if(line) g->h = fmaxf(4.0f, g->h * (1.0f - FACE_LINE_BLINK_FLATTEN * blink));
+        if(line) g->h = fmaxf(4.0f, g->h * (1.0f - FACE_EMOJI_BLINK_FLATTEN * blink));
         g->cx = FACE_SCREEN_W / 2.0f + dir * spacing / 2.0f + s.gaze_x.x;
-        g->cy = FACE_SCREEN_H / 2.0f + (line ? FACE_LINE_EYE_Y : FACE_EYE_Y) + e[P_DY].x +
+        g->cy = FACE_SCREEN_H / 2.0f + FACE_EYE_Y + e[P_DY].x +
                 s.gaze_y.x + hop_dy + FACE_BREATH_DY * breath;
         const float max_r = (g->w < g->h ? g->w : g->h) / 2.0f;
         const float base_r = FACE_EYE_RADIUS < max_r ? FACE_EYE_RADIUS : max_r;
@@ -430,8 +437,9 @@ lv_obj_t * face_init(lv_obj_t * parent)
     s.idle = true;
     s.rng = 0x5eed1234u;
     s.style = FACE_DEFAULT_STYLE;
-    const face_line_expr_t calm = FACE_LINE_NEUTRAL;
-    s.line_want = s.line_shown = calm;
+    s.mouth_dir = 1.0f; /* default: toward the robot's left (screen right), the curious eye */
+    const face_emoji_t calm = FACE_EMOJI_CALM;
+    s.emoji_mood = s.emoji_want = s.emoji_shown = calm;
     s.mouth_scale.x = calm.mouth_scale;
     s.slow = 1.0f;
     s.mood = "neutral";
@@ -468,20 +476,26 @@ bool face_set_mood(const char * mood, uint8_t intensity)
     float * to = (float *)&s.target;
     for(size_t i = 0; i < EXPR_FIELDS; ++i) to[i] = src[i] * k;
 
-    for(size_t i = 0; i < sizeof(k_line_moods) / sizeof(k_line_moods[0]); ++i) {
-        const line_mood_t * lm = &k_line_moods[i];
-        if(strcmp(lm->name, def->name) != 0) continue;
-        if(intensity < FACE_LINE_MIN_INTENSITY) {
-            const face_line_expr_t calm = FACE_LINE_NEUTRAL;
-            s.line_want = calm;
+    for(size_t i = 0; i < sizeof(k_emoji_moods) / sizeof(k_emoji_moods[0]); ++i) {
+        const emoji_mood_t * em = &k_emoji_moods[i];
+        if(strcmp(em->name, def->name) != 0) continue;
+        if(intensity >= FACE_EMOJI_INTENSITY) {
+            s.emoji_mood = em->strong;
         }
         else {
-            s.line_want = intensity >= lm->strong_at ? lm->strong : lm->normal;
-            s.line_want.brow_tilt *= k;
-            s.line_want.brow_lift *= k;
-            s.line_want.mouth_scale *= 0.6f + 0.4f * k;
+            s.emoji_mood = em->mild;
+            s.emoji_mood.mouth_scale *= 0.6f + 0.4f * k; /* mild mouths grow with intensity */
         }
     }
+    if(s.override_ms == 0) s.emoji_want = s.emoji_mood;
+    const bool was_crying = s.tears_loop;
+    s.tears_loop = strcmp(def->name, "sad") == 0 && intensity >= FACE_TEARS_SAD_INTENSITY;
+    if(was_crying && !s.tears_loop && s.acc_on[FACE_ACC_TEAR]) {
+        /* stopped being sad: fade the tears out now instead of finishing the cycle */
+        const uint32_t fade_from = FACE_TEARS_MS - FACE_TEARS_MS / 5;
+        if(s.acc_t[FACE_ACC_TEAR] < fade_from) s.acc_t[FACE_ACC_TEAR] = fade_from;
+    }
+    if(s.tears_loop && !s.acc_on[FACE_ACC_TEAR]) face_show_accessory(FACE_ACC_TEAR);
 
     const bool surprised = strcmp(def->name, "surprised") == 0;
     if(surprised && strcmp(s.mood, "surprised") != 0) s.squash.v += FACE_STRETCH_SURPRISE_KICK;
@@ -494,9 +508,9 @@ bool face_set_mood(const char * mood, uint8_t intensity)
 
 void face_set_style(face_style_t style)
 {
-    if(style != FACE_STYLE_FILLED && style != FACE_STYLE_LINE) return;
+    if(style != FACE_STYLE_FILLED && style != FACE_STYLE_EMOJI) return;
     s.style = style;
-    s.line_shown = s.line_want;
+    s.emoji_shown = s.emoji_want;
     snap_springs(); /* each style has its own eye sizes */
     s.drawn_valid = false;
     if(s.obj) lv_obj_invalidate(s.obj);
@@ -555,6 +569,7 @@ bool face_play_anim(const char * name)
         {"dizzy", FACE_GLYPH_SPIRAL, FACE_DIZZY_MS, -1},
         {"zzz", -1, 0, FACE_ACC_ZZZ},
         {"tear", -1, 0, FACE_ACC_TEAR},
+        {"idea", FACE_GLYPH_BULB, FACE_IDEA_MS, -1},
         {"blush", -1, 0, FACE_ACC_BLUSH},
         {"sweat", -1, 0, FACE_ACC_SWEAT},
         {"question", -1, 0, FACE_ACC_QUESTION},
@@ -563,6 +578,13 @@ bool face_play_anim(const char * name)
     };
     if(strcmp(name, "blink") == 0) {
         start_blink();
+        return true;
+    }
+    if(strcmp(name, "scared") == 0) { /* a temporary emoji face, then back to the mood */
+        const face_emoji_t scared = FACE_EMOJI_SCARED;
+        s.emoji_want = scared;
+        s.override_ms = FACE_SCARED_MS;
+        s.squash.v += FACE_SQUASH_LAND_KICK; /* flinch */
         return true;
     }
     for(size_t i = 0; i < sizeof(k_moves) / sizeof(k_moves[0]); ++i) {
@@ -656,11 +678,21 @@ void face_tick(uint32_t dt)
     }
 
     s.spiral_deg = fmodf(s.spiral_deg + FACE_SPIRAL_DEG_PER_S * dt / 1000.0f, 360.0f);
+    if(s.override_ms > 0) {
+        s.override_ms = s.override_ms > dt ? s.override_ms - dt : 0;
+        if(s.override_ms == 0) s.emoji_want = s.emoji_mood;
+    }
     for(int i = 0; i < FACE_ACC_COUNT; ++i) {
         if(!s.acc_on[i]) continue;
         s.acc_t[i] += dt;
+        /* Crying keeps the tears in the fully shown middle of their life (between the fade-in
+         * and the fade-out) instead of ending them; the drops run on their own clock. */
+        if(i == FACE_ACC_TEAR && s.tears_loop && s.acc_t[i] > k_acc_ms[i] * 3 / 5) {
+            s.acc_t[i] -= k_acc_ms[i] * 9 / 20;
+        }
         if(s.acc_t[i] >= k_acc_ms[i]) s.acc_on[i] = false;
     }
+    s.tears_t = s.acc_on[FACE_ACC_TEAR] ? s.tears_t + dt : 0;
 
     build_render(blink, breath, hop_dy);
     invalidate_changed();

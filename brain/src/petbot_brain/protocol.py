@@ -44,6 +44,8 @@ ANIMS: Final[tuple[str, ...]] = (
     "question",
     "exclaim",
     "music",
+    "scared",
+    "idea",
 )
 
 _NAME_RE: Final = re.compile(r"[a-z0-9_]+")

@@ -13,7 +13,7 @@ Built and tested by CI, not locally in Termux.
 | `src/serial_log.h/.cpp` | Mutex-guarded USB serial logging |
 | `src/config.h` | Pins, baud rates, display options (pins TBD until wiring) |
 | `src/main.cpp` | Boot banner, start link and face, debug keys on USB serial |
-| `lib/face/` | The face (LVGL only); the same code runs in `sim/face_sim`. Two styles: line art with eyebrows and a mouth (default) or filled eyes; pick with `FACE_DEFAULT_STYLE` in `face_style.h` |
+| `lib/face/` | The face (LVGL only); the same code runs in `sim/face_sim`. Two styles: emoji (default: filled eyes when calm, emoji faces with a mouth and eyebrows for strong moods) or filled eyes only; pick with `FACE_DEFAULT_STYLE`, theme colour `FACE_COLOR_THEME`, both in `face_style.h` |
 | `include/lv_conf*.h` | LVGL config; `lv_conf_common.h` is shared with the sim |
 | `test/test_protocol/` | Unity tests, run on the host; include `protocol/test_vectors.txt` |
 
