@@ -42,6 +42,9 @@ def moods(sent: list[tuple[float, Message]]) -> list[Mood]:
     return [m for _, m in sent if isinstance(m, Mood)]
 
 
+PICKUP = Event("imu", "pickup")
+
+
 # ---- personality.toml ----
 
 
@@ -52,6 +55,9 @@ def raw_personality() -> dict:
 
 def test_personality_loads() -> None:
     assert P.max_messages_per_s == 5
+    pickup = P.reflexes["imu pickup"]
+    assert (pickup.mood, pickup.intensity, pickup.hold_s) == ("surprised", 90, 1.5)
+    assert P.reflexes["touch head"].anim == "blink" and P.reflexes["touch head"].only_when_asleep
     assert set(P.mood_ranges) == {"happy", "sad", "angry", "sleepy", "curious", "surprised"}
     assert len(P.impulses) == sum(len(d) for d in EVENTS.values())
 
@@ -69,6 +75,11 @@ def test_personality_loads() -> None:
         lambda d: d["moods"]["happy"].update(valence=[0.1]),  # range needs 2 values
         lambda d: d["output"].update(max_messages_per_s=0),  # out of range
         lambda d: d["arousal"].update(baseline="high"),  # not a number
+        lambda d: d["reflexes"]["imu"]["pickup"].update(mood="startled"),  # unknown mood
+        lambda d: d["reflexes"]["imu"]["pickup"].pop("hold_s"),  # mood needs hold_s
+        lambda d: d["reflexes"]["imu"].update(shake={}),  # needs a mood or an anim
+        lambda d: d["reflexes"]["touch"]["head"].update(only_when_asleep="yes"),  # not a bool
+        lambda d: d["reflexes"]["touch"]["head"].update(anim="Blink"),  # invalid anim
     ],
 )
 def test_personality_is_strict(mutate) -> None:
@@ -98,7 +109,7 @@ def test_values_decay_toward_baseline_with_half_life() -> None:
 
 
 def test_long_quiet_returns_feelings_to_baseline() -> None:
-    s = replace(initial_state(P), valence=-1.0, arousal=1.0)
+    s = replace(initial_state(P), valence=-1.0, arousal=1.0, social=1.0)  # not lonely
     s, _ = run_ticks(s, 300, random.Random(0))
     assert s.valence == pytest.approx(P.valence.baseline, abs=0.01)
     assert s.arousal == pytest.approx(P.arousal.baseline, abs=0.01)
@@ -228,8 +239,10 @@ def test_sleepy_dozes_off_and_an_event_wakes_it() -> None:
     assert Mood("sleepy", 100) in moods(sent)
     _, quiet = run_ticks(s, 60, rng)
     assert not [m for _, m in quiet if isinstance(m, Anim)]  # no idle anims while asleep
-    s, _ = step(s, [HEAD], TICK_S, P, rng)
+    s, woke = step(s, [HEAD], TICK_S, P, rng)
     assert not s.asleep
+    assert woke[0] == Anim("blink")  # reflex: blink, then the wake-up mood
+    assert isinstance(woke[1], Mood) and woke[1] != Mood("sleepy", 100)
     s, _ = run_ticks(s, P.idle_quiet_after_event_s - 1, rng)
     assert not s.asleep  # doesn't fall straight back asleep
 
@@ -289,6 +302,56 @@ def test_every_output_is_valid_protocol(seed: int) -> None:
         assert parse_line(encode(msg)) == msg
 
 
+# ---- reflexes ----
+
+
+def test_pickup_while_happy_shows_surprised_then_returns_to_happy() -> None:
+    for seed in range(5):
+        rng = random.Random(seed)
+        s, _ = run_ticks(initial_state(P), 5, rng, {0: [HEAD], 20: [HEAD]})
+        assert s.shown()[0] == "happy"
+        s, sent = run_ticks(s, 5, rng, {0: [PICKUP]})
+        ms = moods(sent)
+        assert ms[0] == Mood("surprised", 90)
+        assert ms[1].name == "happy"
+        assert s.mood == "happy"  # the model stayed happy underneath
+
+
+def test_reflex_timing_follows_the_injected_clock() -> None:
+    """hold_s is measured on the engine's clock, not wall time: drive it with fake times."""
+    hold = P.reflexes["imu pickup"].hold_s
+    engine = MoodEngine(P, seed=0)
+    engine.update(1000.0)
+    engine.update(1001.0, [HEAD])
+    assert engine.update(1010.0, [PICKUP])[0] == Mood("surprised", 90)
+    engine.update(1010.0 + hold - 0.05)
+    assert engine.state.shown() == ("surprised", 90)
+    out = engine.update(1010.0 + hold + 0.05)
+    assert engine.state.shown()[0] != "surprised"
+    assert out and isinstance(out[0], Mood) and out[0].name != "surprised"
+
+
+def test_reflex_still_feeds_the_mood_model() -> None:
+    rng = random.Random(0)
+    s = initial_state(P)
+    after, _ = step(s, [PICKUP], TICK_S, P, rng)
+    assert after.arousal > s.arousal + 0.4  # pickup impulse applied as usual
+
+
+def test_reflex_outputs_respect_the_rate_limit() -> None:
+    rng = random.Random(0)
+    s = replace(initial_state(P), sent_times=(0.0,) * P.max_messages_per_s, t=0.05)
+    s, out = step(s, [PICKUP], 0.0, P, rng)
+    assert out == []  # budget used up: nothing goes out this step...
+    s, out = step(s, [], 1.0, P, rng)
+    assert out[0] == Mood("surprised", 90)  # ...the reflex mood follows once there's room
+
+
+def test_touch_head_reflex_only_when_asleep() -> None:
+    _, out = step(initial_state(P), [HEAD], TICK_S, P, random.Random(0))
+    assert Anim("blink") not in out
+
+
 # ---- scenarios (sim/mood_replay.py) ----
 
 
@@ -312,23 +375,39 @@ def scenario_moods(replay, name: str, seed: int = 0) -> list[tuple[float, Mood]]
     return sent
 
 
-def test_scenario_petting(replay) -> None:
-    names = [m.name for _, m in scenario_moods(replay, "petting")]
+@pytest.mark.parametrize("seed", range(5))
+def test_scenario_petting_never_sad(replay, seed: int) -> None:
+    names = [m.name for _, m in scenario_moods(replay, "petting", seed)]
     assert names[1] == "happy"
-    assert "angry" in names[names.index("happy") :]
+    assert "angry" in names[names.index("happy") :]  # grumpy from too many pats...
+    assert "sad" not in names  # ...but over-petting is not a reason to be sad
+    assert names[-1] == "neutral"
 
 
-def test_scenario_ignored(replay) -> None:
-    sent = scenario_moods(replay, "ignored")
-    before_pat = [m for t, m in sent if t < 3601]
-    assert "curious" in [m.name for m in before_pat]
-    assert before_pat[-1] == Mood("sleepy", 100)  # asleep when the pat comes
-    assert [m for t, m in sent if t >= 3601][0].name == "happy"
+@pytest.mark.parametrize("seed", range(3))
+def test_scenario_ignored(replay, seed: int) -> None:
+    sent = scenario_moods(replay, "ignored", seed)
+    before_pat = [m.name for t, m in sent if t < 3601]
+    assert before_pat.index("curious") < before_pat.index("sad")  # bored, then lonely
+    assert before_pat[-1] == "sad"
+    after_pat = [m.name for t, m in sent if t >= 3601]
+    assert after_pat[0] == "happy"  # a touch comforts a lonely pet
+    assert "sleepy" in after_pat  # but it's tired after an hour
 
 
 def test_scenario_shaken(replay) -> None:
-    names = [m.name for _, m in scenario_moods(replay, "shaken")]
+    sent = scenario_moods(replay, "shaken")
+    names = [m.name for _, m in sent]
     assert names.index("surprised") < names.index("angry") < names.index("sad")
+    assert sent[1] == (2.0, Mood("surprised", 90))  # pickup reflex
+    assert any(t == pytest.approx(6.5) and m == Mood("surprised", 100) for t, m in sent)  # fall
+
+
+def test_scenario_pickup_while_happy(replay) -> None:
+    sent = scenario_moods(replay, "pickup_happy")
+    shown = [(t, m) for t, m in sent if t >= 8.9]
+    assert shown[0] == (9.0, Mood("surprised", 90))
+    assert shown[1][1].name == "happy" and shown[1][0] == pytest.approx(10.5)
 
 
 def test_replay_writes_csv(replay, tmp_path: Path) -> None:
