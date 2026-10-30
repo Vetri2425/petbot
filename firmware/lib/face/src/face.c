@@ -56,7 +56,7 @@ static struct {
     anim_t anim;
     uint32_t anim_t;
 
-    eye_geom_t eyes[2]; /* 0 = left, 1 = right */
+    eye_geom_t eyes[2]; /* by screen position: 0 = screen left (robot's right eye), 1 = screen right */
 } s;
 
 /* ---- small helpers ---- */
@@ -174,17 +174,19 @@ static void next_glance(void)
 
 /* ---- geometry and drawing ---- */
 
+/* `side` is the screen position (0 = left). The robot's left eye is on the screen's right. */
 static void compute_eye(int side, float gx, float gy, float breath, float blink)
 {
     const face_expr_t * e = &s.cur;
-    const float dir = side ? 1.0f : -1.0f;
-    const float grow = 1.0f + (side ? e->grow_right : e->grow_left);
+    const bool robot_left = side == 1;
+    const float dir = side ? 1.0f : -1.0f; /* screen x direction from the center */
+    const float grow = 1.0f + (robot_left ? e->grow_left : e->grow_right);
     eye_geom_t * g = &s.eyes[side];
 
     g->w = FACE_EYE_W * (1.0f + e->grow_w) * grow;
     g->h = FACE_EYE_H * (1.0f + e->grow_h) * grow * (1.0f + FACE_BREATH_SCALE * breath);
     g->cx = FACE_SCREEN_W / 2.0f + dir * FACE_EYE_SPACING / 2.0f + gx;
-    g->cy = FACE_SCREEN_H / 2.0f + FACE_EYE_Y + e->dy + dir * e->tilt + gy +
+    g->cy = FACE_SCREEN_H / 2.0f + FACE_EYE_Y + e->dy + (robot_left ? -e->tilt : e->tilt) + gy +
             FACE_BREATH_DY * breath;
 
     const float max_r = (g->w < g->h ? g->w : g->h) / 2.0f;
@@ -392,9 +394,10 @@ void face_tick(uint32_t dt)
             s.anim = ANIM_NONE;
         }
         else {
+            /* Robot's left is the screen's right (+x), ADR 0014. */
             const bool left = s.anim == ANIM_LOOK_LEFT || s.anim == ANIM_WAVE_LEFT;
             const float env = anim_envelope(s.anim_t, total);
-            const float target = (left ? -1.0f : 1.0f) * (look ? FACE_LOOK_X : FACE_WAVE_X);
+            const float target = (left ? 1.0f : -1.0f) * (look ? FACE_LOOK_X : FACE_WAVE_X);
             gx = lerp(gx, target, env);
             gy = lerp(gy, 0.0f, env);
             if(!look) {

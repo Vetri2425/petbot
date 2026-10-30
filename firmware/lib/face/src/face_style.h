@@ -1,5 +1,6 @@
 /* PetBot face: every tunable timing and shape value lives here.
- * Directions are as seen on the screen (left = smaller x).
+ * Left/right is the robot's own frame (ADR 0014): the robot faces the viewer, so its left
+ * eye is drawn on the screen's right and look_left moves the eyes toward screen-right.
  * Only face.c (and tools that need the timings, like the simulator) include this file. */
 #ifndef PETBOT_FACE_STYLE_H
 #define PETBOT_FACE_STYLE_H
@@ -49,7 +50,7 @@
 #define FACE_LOOK_MS 900           /* look_left / look_right total time */
 #define FACE_LOOK_X 30             /* px */
 #define FACE_WAVE_MS 1000          /* wave_left / wave_right total time */
-#define FACE_WAVE_X 20             /* px glance toward the waving side */
+#define FACE_WAVE_X 20             /* px glance toward the waving arm's side */
 #define FACE_WAVE_BOUNCES 2
 #define FACE_WAVE_BOUNCE_PX 10
 #define FACE_ANIM_RAMP_MS 160      /* ease in/out at the start and end of look/wave */
@@ -60,15 +61,15 @@
 typedef struct {
     float grow_w;     /* eye width change, fraction (+0.2 = 20% wider) */
     float grow_h;     /* eye height change, fraction */
-    float grow_left;  /* extra size change of the left eye only, fraction */
-    float grow_right; /* extra size change of the right eye only, fraction */
+    float grow_left;  /* extra size change of the robot's left eye (screen right), fraction */
+    float grow_right; /* extra size change of the robot's right eye (screen left), fraction */
     float lid_top;    /* flat top lid, 0-1 of eye height */
     float slant_in;   /* top lid lowered at the inner corners, 0-1 of eye height (angry) */
     float slant_out;  /* top lid lowered at the outer corners, 0-1 of eye height (sad) */
     float cheek;      /* bottom cut by an arc, 0-1 of eye height (happy: upward arcs) */
     float round;      /* 0 = FACE_EYE_RADIUS corners, 1 = fully round */
     float dy;         /* px, both eyes (positive = down) */
-    float tilt;       /* px, left eye up and right eye down (head-tilt offset) */
+    float tilt;       /* px, robot's left eye up and right eye down (head-tilt offset) */
 } face_expr_t;
 
 #define FACE_EXPR_NEUTRAL {.grow_w = 0.0f}

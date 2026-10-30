@@ -238,6 +238,57 @@ bool savePng(lv_obj_t* obj, const std::string& path) {
     return true;
 }
 
+// ---- checks (run in --snapshot mode, so CI enforces them) ----
+
+// Mean x of the cyan eye pixels in a full render of `obj`.
+bool eyesCenterX(lv_obj_t* obj, float& cx) {
+    lv_draw_buf_t* buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_ARGB8888);
+    if (buf == nullptr) return false;
+    double sum = 0;
+    size_t count = 0;
+    for (uint32_t y = 0; y < buf->header.h; ++y) {
+        const uint8_t* row = buf->data + y * buf->header.stride;  // B, G, R, A
+        for (uint32_t x = 0; x < buf->header.w; ++x) {
+            if (row[x * 4 + 1] > 128 && row[x * 4 + 0] > 128) {
+                sum += x;
+                ++count;
+            }
+        }
+    }
+    lv_draw_buf_destroy(buf);
+    if (count == 0) return false;
+    cx = static_cast<float>(sum / count);
+    return true;
+}
+
+// ADR 0014: left/right is the robot's frame, so *_left moves the eyes toward screen-right.
+bool checkDirections(lv_obj_t* face) {
+    float neutral;
+    face_tick(2000);
+    if (!eyesCenterX(face, neutral)) return false;
+    const struct {
+        const char* anim;
+        uint32_t at;
+        float sign;  // +1: must move toward screen-right
+    } cases[] = {{"look_left", FACE_LOOK_MS / 2, +1.0f},
+                 {"look_right", FACE_LOOK_MS / 2, -1.0f},
+                 {"wave_left", FACE_WAVE_MS / 2, +1.0f},
+                 {"wave_right", FACE_WAVE_MS / 2, -1.0f}};
+    bool ok = true;
+    for (const auto& c : cases) {
+        face_play_anim(c.anim);
+        face_tick(c.at);
+        float x;
+        const bool measured = eyesCenterX(face, x);
+        const bool pass = measured && (x - neutral) * c.sign >= 10.0f;
+        printf("[check] %-10s eyes x=%.1f (neutral %.1f) -> %s: %s\n", c.anim, x, neutral,
+               c.sign > 0 ? "screen-right" : "screen-left", pass ? "OK" : "FAIL");
+        ok &= pass;
+        face_tick(2000);
+    }
+    return ok;
+}
+
 // Settle on a mood with no transition in progress.
 void settle(const char* mood, uint8_t intensity) {
     face_set_mood(mood, intensity);
@@ -320,6 +371,8 @@ int runSnapshots(lv_obj_t* face, const std::string& dir) {
         ok &= savePng(face, dir + name);
         face_tick(2000);
     }
+    face_tick(2000);
+    ok &= checkDirections(face);
     return ok ? 0 : 1;
 }
 
