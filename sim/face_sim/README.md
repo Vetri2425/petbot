@@ -42,11 +42,12 @@ After 30 s without events the brain sends `MOOD sleepy 0.40`.
 ## Snapshots
 
 `--snapshot <dir>` turns idle life off (so frames are repeatable) and writes the full set for
-each face style, in `<dir>/line/` (the default: glowing line art, eyebrows, mouth) and
-`<dir>/filled/` (two filled eyes with lids):
+each face style, in `<dir>/emoji/` (the default: filled eyes when calm, emoji faces with
+line-art eyes, eyebrows and a mouth for strong moods) and `<dir>/filled/` (filled eyes only):
 - `contact_sheet.png`: every mood (at 50 and 100), glyph eye and accessory, labelled.
 - `strip_spring_neutral_to_surprised.png`, `strip_saccade_look_left.png`: frames at
   0/40/80/120/200 ms of one spring transition and one saccade.
+- `strip_tears_loop.png`: sad 100 crying, across one tear cycle; `anim_scared.png`.
 - `mood_<n>_<name>_{050,100}.png`, `glyph_<name>.png`, `accessory_<name>.png`,
   `transition_<from>_to_<to>_<ms>.png`, `blink_*.png`, `anim_*.png`.
 

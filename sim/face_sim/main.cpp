@@ -436,9 +436,9 @@ bool saveFace(lv_obj_t* face, const std::string& path) {
     return capture(face, img) && writePng(img, path);
 }
 
-// A strip of labeled frames at fixed times after `start` runs (one spring move).
-bool saveStrip(lv_obj_t* face, const std::string& path, const char* title, void (*start)()) {
-    const uint32_t times[] = {0, 40, 80, 120, 200};
+// A strip of labeled frames at the given times (ms) after `start` runs.
+bool saveStrip(lv_obj_t* face, const std::string& path, const char* title, void (*start)(),
+               const std::vector<uint32_t>& times = {0, 40, 80, 120, 200}) {
     std::vector<Image> cells;
     uint32_t done = 0;
     start();
@@ -501,7 +501,7 @@ int snapshotStyle(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
 
     // Accessories, at a representative moment of their life.
     const float when[FACE_ACC_COUNT] = {0.4f, 0.55f, 0.5f, 0.55f, 0.45f, 0.35f, 0.5f};
-    const uint32_t life[FACE_ACC_COUNT] = {FACE_BLUSH_MS,    FACE_TEAR_MS,    FACE_SWEAT_MS,
+    const uint32_t life[FACE_ACC_COUNT] = {FACE_BLUSH_MS,    FACE_TEARS_MS,    FACE_SWEAT_MS,
                                            FACE_ZZZ_MS,      FACE_QUESTION_MS, FACE_EXCLAIM_MS,
                                            FACE_MUSIC_MS};
     for (int a = 0; a < FACE_ACC_COUNT; ++a) {
@@ -517,6 +517,17 @@ int snapshotStyle(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
         sheet.push_back(img);
         clearFx();
     }
+    // Emoji faces that aren't a mood: the scared reflex face (emoji style; filled shows its mood).
+    settle("neutral", 100);
+    face_play_anim("scared");
+    face_tick(600);
+    {
+        Image img;
+        ok &= captureLabeled(face, "anim scared", img);
+        sheet.push_back(img);
+        ok &= saveFace(face, dir + "/anim_scared.png");
+    }
+    face_tick(3000);
     ok &= writePng(tile(sheet, 6), dir + "/contact_sheet.png");
 
     // Mid-transition frames (springs: these overshoot and settle).
@@ -545,6 +556,14 @@ int snapshotStyle(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     ok &= saveStrip(face, dir + "/strip_saccade_look_left.png", "saccade look_left",
                     [] { face_play_anim("look_left"); });
     face_tick(3000);
+
+    // Tears loop: sad enough to cry, frames across one drop cycle.
+    settle("sad", 100);
+    const uint32_t q = FACE_TEARS_PERIOD_MS / 4;
+    ok &= saveStrip(face, dir + "/strip_tears_loop.png", "sad 100 tears", [] {},
+                    {0, q, 2 * q, 3 * q, 4 * q});
+    settle("neutral", 100);
+    face_tick(4000);
 
     // Blink: closing, closed, opening.
     settle("neutral", 100);
@@ -593,7 +612,7 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     const struct {
         face_style_t style;
         const char* name;
-    } styles[] = {{FACE_STYLE_LINE, "line"}, {FACE_STYLE_FILLED, "filled"}};
+    } styles[] = {{FACE_STYLE_EMOJI, "emoji"}, {FACE_STYLE_FILLED, "filled"}};
     int rc = 0;
     for (const auto& st : styles) {
         printf("[style] %s\n", st.name);
