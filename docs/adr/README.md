@@ -19,3 +19,4 @@ New decisions get the next number; superseded ADRs stay and are marked "Supersed
 | 0012 | Body: SolidWorks and 3D printing |
 | 0013 | Phased roadmap |
 | 0014 | Left/right means the robot's own frame |
+| 0015 | Pet behaviour is a continuous mood model tuned by data |
