@@ -4,7 +4,9 @@ Simulators for sim-first development (ADR 0010).
 - `fake_esp32.py`: plays the ESP32 over a serial port. It prints received MOOD/ANIM lines and
   sends events from keys or a `--script` file. Uses `petbot_brain.protocol` for parsing.
 - `run_link.sh`: creates a socat virtual serial pair `/tmp/petbot-esp <-> /tmp/petbot-brain`.
-- Planned: LVGL desktop face simulator, arm64 Docker container capped at 2GB for the voice pipeline.
+- `face_sim/`: LVGL + SDL2 simulator of the face (`firmware/lib/face`). It can also act as the
+  ESP32 on the link, see [face_sim/README.md](face_sim/README.md).
+- Planned: arm64 Docker container capped at 2GB for the voice pipeline.
 No Gazebo. Models are downloaded at run time, never committed.
 
 ## Two-terminal demo (brain <-> fake ESP32)
