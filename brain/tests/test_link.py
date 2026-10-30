@@ -26,7 +26,7 @@ def receive_next(link: SerialLink, timeout: float = 2.0):
 
 
 def test_send_writes_encoded_line(pty: Pty, link: SerialLink) -> None:
-    link.send(Mood("happy", 0.8))
+    link.send(Mood("happy", 80))
     link.send(Anim("wave_left"))
     assert pty.read_line() == b"MOOD happy 0.80\n"
     assert pty.read_line() == b"ANIM wave_left\n"

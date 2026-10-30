@@ -19,7 +19,8 @@ from petbot_brain.protocol import (
 PROTOCOL_MD = Path(__file__).resolve().parents[2] / "protocol" / "PROTOCOL.md"
 
 ALL_MESSAGES: list[Message] = (
-    [Mood(name, 0.5) for name in MOODS]
+    [Mood(name, 50) for name in MOODS]
+    + [Mood("happy", i) for i in (0, 1, 5, 10, 99, 100)]
     + [Anim("wave_left"), Anim("wave_right")]
     + [Event(source, detail) for source, details in EVENTS.items() for detail in details]
 )
@@ -38,10 +39,12 @@ def test_round_trip_from_str(msg: Message) -> None:
 @pytest.mark.parametrize(
     ("msg", "wire"),
     [
-        (Mood("happy", 0.8), b"MOOD happy 0.80\n"),
-        (Mood("sleepy", 0.4), b"MOOD sleepy 0.40\n"),
+        (Mood("happy", 80), b"MOOD happy 0.80\n"),
+        (Mood("sleepy", 40), b"MOOD sleepy 0.40\n"),
         (Mood("neutral", 0), b"MOOD neutral 0.00\n"),
-        (Mood("sad", 1.0), b"MOOD sad 1.00\n"),
+        (Mood("sad", 100), b"MOOD sad 1.00\n"),
+        (Mood("happy", 5), b"MOOD happy 0.05\n"),
+        (Mood("happy", 81), b"MOOD happy 0.81\n"),
         (Anim("wave_left"), b"ANIM wave_left\n"),
         (Event("touch", "head"), b"EVT touch head\n"),
         (Event("imu", "pickup"), b"EVT imu pickup\n"),
@@ -54,12 +57,13 @@ def test_encode_format(msg: Message, wire: bytes) -> None:
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        ("MOOD happy 0.8", Mood("happy", 0.8)),
-        ("MOOD happy 1", Mood("happy", 1.0)),
-        ("MOOD happy 0.123", Mood("happy", 0.123)),
+        ("MOOD happy 0.8", Mood("happy", 80)),
+        ("MOOD happy 1", Mood("happy", 100)),
+        ("MOOD happy 0.05", Mood("happy", 5)),
+        ("MOOD happy 00.5", Mood("happy", 50)),
         ("EVT touch head\r\n", Event("touch", "head")),
         (b"ANIM wave_left\r\n", Anim("wave_left")),
-        (b"MOOD curious 0.60\n", Mood("curious", 0.6)),
+        (b"MOOD curious 0.60\n", Mood("curious", 60)),
     ],
 )
 def test_parse_valid(line: str | bytes, expected: Message) -> None:
@@ -84,6 +88,10 @@ def test_parse_valid(line: str | bytes, expected: Message) -> None:
         "MOOD happy nan",
         "MOOD happy inf",
         "MOOD happy 1e-1",
+        # more than 2 decimals
+        "MOOD happy 0.815",
+        "MOOD happy 0.123",
+        "MOOD happy 1.000",
         "ANIM",
         "ANIM Wave",
         "ANIM wave-left",
@@ -157,9 +165,10 @@ def test_encode_rejects_too_long() -> None:
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: Mood("grumpy", 0.5),
-        lambda: Mood("happy", 1.5),
-        lambda: Mood("happy", -0.1),
+        lambda: Mood("grumpy", 50),
+        lambda: Mood("happy", 101),
+        lambda: Mood("happy", -1),
+        lambda: Mood("happy", 0.5),
         lambda: Mood("happy", float("nan")),
         lambda: Mood("happy", True),
         lambda: Anim("Wave Left"),
@@ -178,7 +187,7 @@ def test_encode_rejects_non_message() -> None:
 
 
 def test_messages_are_frozen() -> None:
-    mood = Mood("happy", 0.5)
+    mood = Mood("happy", 50)
     with pytest.raises(AttributeError):
         mood.name = "sad"  # type: ignore[misc]
 

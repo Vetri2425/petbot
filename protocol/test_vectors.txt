@@ -1,0 +1,153 @@
+# PetBot protocol v1 shared test vectors (protocol/PROTOCOL.md).
+# Run by brain/tests/test_vectors.py (Python) and firmware/test/ (C++ Unity, native).
+#
+# Format, one case per line:
+#   VALID <line>  # => <expected encode(parse(line)) without the \n>
+#   INVALID <line>  # <reason>
+# <line> starts after the first space and ends at the first "  #" (two spaces, hash).
+# Escapes in <line>: \\ \n \r \t \xHH. Leading/trailing spaces are written as \x20.
+# A <line> without a trailing \n is parsed as if terminated by \n (the \n counts toward 128 bytes).
+
+# --- MOOD: every mood name
+VALID MOOD neutral 0.50  # => MOOD neutral 0.50
+VALID MOOD happy 0.80  # => MOOD happy 0.80
+VALID MOOD sad 0.70  # => MOOD sad 0.70
+VALID MOOD angry 0.50  # => MOOD angry 0.50
+VALID MOOD sleepy 0.40  # => MOOD sleepy 0.40
+VALID MOOD curious 0.60  # => MOOD curious 0.60
+VALID MOOD surprised 0.90  # => MOOD surprised 0.90
+
+# --- MOOD: intensity forms
+VALID MOOD happy 0  # => MOOD happy 0.00
+VALID MOOD happy 1  # => MOOD happy 1.00
+VALID MOOD happy 0.0  # => MOOD happy 0.00
+VALID MOOD happy 1.0  # => MOOD happy 1.00
+VALID MOOD happy 1.00  # => MOOD happy 1.00
+VALID MOOD happy 0.8  # => MOOD happy 0.80
+VALID MOOD happy 0.81  # => MOOD happy 0.81
+VALID MOOD happy 0.99  # => MOOD happy 0.99
+VALID MOOD happy 0.01  # => MOOD happy 0.01
+VALID MOOD happy 0.05  # => MOOD happy 0.05
+VALID MOOD happy 0.5  # => MOOD happy 0.50
+VALID MOOD happy 00.5  # => MOOD happy 0.50
+VALID MOOD happy 01  # => MOOD happy 1.00
+
+# --- ANIM
+VALID ANIM wave_left  # => ANIM wave_left
+VALID ANIM wave_right  # => ANIM wave_right
+VALID ANIM a  # => ANIM a
+VALID ANIM 0  # => ANIM 0
+VALID ANIM _  # => ANIM _
+VALID ANIM x_1  # => ANIM x_1
+
+# --- EVT: every source/detail
+VALID EVT touch head  # => EVT touch head
+VALID EVT touch left  # => EVT touch left
+VALID EVT touch right  # => EVT touch right
+VALID EVT touch back  # => EVT touch back
+VALID EVT imu pickup  # => EVT imu pickup
+VALID EVT imu shake  # => EVT imu shake
+VALID EVT imu tilt  # => EVT imu tilt
+VALID EVT imu fall  # => EVT imu fall
+
+# --- terminators
+VALID EVT touch head\n  # => EVT touch head
+VALID EVT touch head\r\n  # => EVT touch head
+VALID MOOD happy 0.80\r\n  # => MOOD happy 0.80
+VALID ANIM wave_left\n  # => ANIM wave_left
+
+# --- length: 128 bytes including the terminator is the maximum
+VALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  # => ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+VALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # => ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+VALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n  # => ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+INVALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  # 129 bytes
+INVALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  # 129 bytes counting the implicit \n
+INVALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n  # 129 bytes with CR LF
+INVALID ANIM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  # far too long
+
+# --- unknown command
+INVALID HELLO  # unknown command
+INVALID PING 1  # unknown command
+INVALID mood happy 0.5  # verbs are uppercase
+INVALID Mood happy 0.5  # verbs are uppercase
+INVALID MOODhappy 0.5  # unknown command
+INVALID EVENT touch head  # unknown command
+
+# --- wrong argument count
+INVALID MOOD  # MOOD needs 2 args
+INVALID MOOD happy  # MOOD needs 2 args
+INVALID MOOD happy 0.5 extra  # MOOD needs 2 args
+INVALID ANIM  # ANIM needs 1 arg
+INVALID ANIM a b  # ANIM needs 1 arg
+INVALID EVT  # EVT needs 2 args
+INVALID EVT touch  # EVT needs 2 args
+INVALID EVT touch head now  # EVT needs 2 args
+
+# --- bad intensity
+INVALID MOOD happy abc  # not a number
+INVALID MOOD happy .5  # needs a leading digit
+INVALID MOOD happy 0.  # needs digits after the point
+INVALID MOOD happy 1.  # needs digits after the point
+INVALID MOOD happy -0.1  # no sign allowed
+INVALID MOOD happy +0.5  # no sign allowed
+INVALID MOOD happy nan  # not a number
+INVALID MOOD happy inf  # not a number
+INVALID MOOD happy 1e-1  # no exponent
+INVALID MOOD happy 0,5  # comma is not a decimal point
+INVALID MOOD happy 0.5.5  # two points
+INVALID MOOD happy 0x1  # not decimal
+
+# --- more than 2 decimals
+INVALID MOOD happy 0.815  # 3 decimals
+INVALID MOOD happy 0.805  # 3 decimals
+INVALID MOOD happy 0.123  # 3 decimals
+INVALID MOOD happy 0.999  # 3 decimals
+INVALID MOOD happy 0.001  # 3 decimals
+INVALID MOOD happy 1.000  # 3 decimals
+INVALID MOOD happy 0.800  # 3 decimals, even with trailing zeros
+
+# --- out-of-range intensity
+INVALID MOOD happy 1.01  # > 1.0
+INVALID MOOD happy 1.0000001  # more than 2 decimals
+INVALID MOOD happy 2  # > 1.0
+INVALID MOOD happy 10  # > 1.0
+INVALID MOOD happy 0001.5  # > 1.0
+
+# --- unknown names
+INVALID MOOD grumpy 0.5  # unknown mood
+INVALID MOOD Happy 0.5  # names are lowercase
+INVALID MOOD happy_ 0.5  # unknown mood
+INVALID ANIM Wave  # names are [a-z0-9_]+
+INVALID ANIM wave-left  # names are [a-z0-9_]+
+INVALID ANIM wave.left  # names are [a-z0-9_]+
+INVALID EVT touch nose  # unknown touch detail
+INVALID EVT sonar ping  # unknown source
+INVALID EVT imu head  # detail belongs to another source
+INVALID EVT touch pickup  # detail belongs to another source
+INVALID EVT Touch head  # names are lowercase
+
+# --- spacing
+INVALID MOOD  happy 0.5  # double space
+INVALID EVT touch  head  # double space
+INVALID \x20MOOD happy 0.5  # leading space
+INVALID MOOD happy 0.5\x20  # trailing space
+INVALID EVT touch head\x20\n  # trailing space before LF
+INVALID \x20  # only a space
+INVALID MOOD\thappy 0.5  # tab is not a separator
+
+# --- empty and control characters
+INVALID   # empty line
+INVALID \n  # empty line
+INVALID \r\n  # empty line
+INVALID EVT touch head\r  # lone CR
+INVALID EVT touch head\r\r\n  # CR before CR LF
+INVALID EVT touch\x00 head  # NUL byte
+INVALID EVT touch head\x7f  # DEL
+INVALID EVT touch head\x1b  # ESC
+INVALID EVT touch head\nEVT touch left  # LF inside the line
+
+# --- non-ASCII
+INVALID MOOD h\xc3\xa9ureux 0.5  # UTF-8 bytes
+INVALID EVT touch head\xff  # 0xFF byte
+INVALID EVT touch head\x80\n  # 0x80 byte
+INVALID MOOD happy 0\xc2\xb75  # UTF-8 middle dot
