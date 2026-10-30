@@ -16,6 +16,8 @@
 #define LV_SDL_INCLUDE_PATH <SDL2/SDL.h>
 #define LV_SDL_ACCELERATED 0
 #define LV_SDL_DIRECT_EXIT 0
+#define LV_SDL_RENDER_MODE LV_DISPLAY_RENDER_MODE_DIRECT /* full framebuffer: the redraw check reads it */
+#define LV_SDL_BUF_COUNT 1
 
 /* --snapshot: render objects to buffers and write PNGs with LVGL's bundled lodepng. */
 #define LV_USE_SNAPSHOT 1

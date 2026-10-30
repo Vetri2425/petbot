@@ -7,6 +7,7 @@
 #include "face_style.h"
 
 #define PI_F 3.14159265f
+#define DIRTY_MARGIN 4 /* px around an eye's box; lids are drawn up to 2 px outside it */
 #define EXPR_FIELDS (sizeof(face_expr_t) / sizeof(float))
 
 typedef struct {
@@ -57,6 +58,11 @@ static struct {
     uint32_t anim_t;
 
     eye_geom_t eyes[2]; /* by screen position: 0 = screen left (robot's right eye), 1 = screen right */
+
+    /* What is on screen, so only changed eye areas are redrawn (SPI time on the ESP32). */
+    bool drawn_valid;
+    eye_geom_t drawn[2];
+    lv_area_t drawn_box[2];
 } s;
 
 /* ---- small helpers ---- */
@@ -268,6 +274,32 @@ static void draw_eye(lv_layer_t * layer, int32_t ox, int32_t oy, const eye_geom_
     }
 }
 
+static void eye_box(const eye_geom_t * g, const lv_area_t * obj, lv_area_t * out)
+{
+    out->x1 = obj->x1 + (int32_t)floorf(g->cx - g->w / 2.0f) - DIRTY_MARGIN;
+    out->x2 = obj->x1 + (int32_t)ceilf(g->cx + g->w / 2.0f) + DIRTY_MARGIN;
+    out->y1 = obj->y1 + (int32_t)floorf(g->cy - g->h / 2.0f) - DIRTY_MARGIN;
+    out->y2 = obj->y1 + (int32_t)ceilf(g->cy + g->h / 2.0f) + DIRTY_MARGIN;
+}
+
+/* Invalidate the old and new box of each eye whose geometry changed. */
+static void invalidate_changed(void)
+{
+    if(s.obj == NULL) return;
+    lv_area_t c;
+    lv_obj_get_coords(s.obj, &c);
+    for(int side = 0; side < 2; ++side) {
+        if(s.drawn_valid && memcmp(&s.eyes[side], &s.drawn[side], sizeof(eye_geom_t)) == 0) continue;
+        lv_area_t box;
+        eye_box(&s.eyes[side], &c, &box);
+        if(s.drawn_valid) lv_obj_invalidate_area(s.obj, &s.drawn_box[side]);
+        lv_obj_invalidate_area(s.obj, &box);
+        s.drawn[side] = s.eyes[side];
+        s.drawn_box[side] = box;
+    }
+    s.drawn_valid = true;
+}
+
 static void draw_cb(lv_event_t * e)
 {
     lv_layer_t * layer = lv_event_get_layer(e);
@@ -295,6 +327,8 @@ lv_obj_t * face_init(lv_obj_t * parent)
     lv_obj_set_style_bg_opa(s.obj, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s.obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s.obj, draw_cb, LV_EVENT_DRAW_MAIN_END, NULL);
+    lv_obj_update_layout(s.obj);
+    lv_obj_invalidate(s.obj);
 
     face_tick(0);
     return s.obj;
@@ -409,5 +443,5 @@ void face_tick(uint32_t dt)
 
     compute_eye(0, gx, gy, breath, blink);
     compute_eye(1, gx, gy, breath, blink);
-    if(s.obj) lv_obj_invalidate(s.obj);
+    invalidate_changed();
 }
