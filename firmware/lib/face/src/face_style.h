@@ -13,6 +13,9 @@
  * face_set_style() overrides at runtime. */
 #define FACE_DEFAULT_STYLE FACE_STYLE_EMOJI
 
+/* ---- Overall size -------------------------------------------------------------------- */
+#define FACE_SCALE 1.15f           /* multiplies every size below marked "x FACE_SCALE" */
+
 /* ---- Screen and colors ------------------------------------------------------------- */
 #define FACE_SCREEN_W 320          /* px, 2.0" ST7789 in landscape */
 #define FACE_SCREEN_H 240
@@ -21,10 +24,10 @@
                                      * Change this one value to match the body color. */
 
 /* ---- Neutral eye geometry ---------------------------------------------------------- */
-#define FACE_EYE_W 72              /* px */
-#define FACE_EYE_H 96
-#define FACE_EYE_RADIUS 24         /* corner radius at neutral */
-#define FACE_EYE_SPACING 150       /* px between the two eye centers */
+#define FACE_EYE_W (72 * FACE_SCALE)  /* px */
+#define FACE_EYE_H (96 * FACE_SCALE)
+#define FACE_EYE_RADIUS (24 * FACE_SCALE)  /* corner radius at neutral */
+#define FACE_EYE_SPACING (150 * FACE_SCALE)  /* px between the two eye centers */
 #define FACE_EYE_Y (-6)            /* px, eye centers relative to the screen middle */
 
 /* ---- Springs: every shape and position change overshoots a little, then settles -------
@@ -41,6 +44,7 @@
 #define FACE_SPRING_GLYPH_K 520.0f  /* glyph pop in/out */
 #define FACE_SPRING_GLYPH_C 17.0f
 #define FACE_SPRING_STEP_MS 2       /* integration sub-step */
+#define FACE_CURVE_SEGMENTS 32      /* straight pieces per curved stroke (smooth at 2x zoom) */
 #define FACE_MOOD_SETTLE_MS 700     /* roughly how long a mood change takes to settle */
 
 /* ---- Squash & stretch (kicks are spring velocities; + = wide/short, - = tall/narrow) ---- */
@@ -118,22 +122,22 @@ typedef struct {
  * big filled eyes (shaped by FACE_EXPR_*) with a mild mouth. At or above it a mood becomes a
  * full emoji face. Shapes swap with the squash pop; brows and mouth size are springs. */
 #define FACE_EMOJI_INTENSITY 70
-#define FACE_EMOJI_EYE_W 66             /* box for line-art eyes */
-#define FACE_EMOJI_EYE_H 54
-#define FACE_EMOJI_STROKE 10            /* px, line-art eyes, brows and mouth lines */
+#define FACE_EMOJI_EYE_W (66 * FACE_SCALE)  /* box for line-art eyes */
+#define FACE_EMOJI_EYE_H (54 * FACE_SCALE)
+#define FACE_EMOJI_STROKE (10 * FACE_SCALE)  /* px, line-art eyes, brows and mouth lines */
 #ifndef FACE_GLOW_ENABLED
-#define FACE_GLOW_ENABLED 1             /* 0: skip the glow pass (less drawing per frame) */
+#define FACE_GLOW_ENABLED 0             /* 1: draw a soft glow under every line (more drawing) */
 #endif
-#define FACE_EMOJI_GLOW 9               /* px of glow around every line */
+#define FACE_EMOJI_GLOW (9 * FACE_SCALE)  /* px of glow around every line */
 #define FACE_EMOJI_GLOW_OPA 55          /* 0-255 */
 #define FACE_EMOJI_BLINK_FLATTEN 0.85f  /* a blink squashes line-art eyes this much */
-#define FACE_EMOJI_BROW_LEN 44
-#define FACE_EMOJI_BROW_GAP 12          /* px above the eye */
-#define FACE_EMOJI_BROW_TILT_PX 14      /* inner end up (sad) or down (angry) at tilt 1 */
-#define FACE_EMOJI_BROW_LIFT_PX 12      /* raised brows (surprised) at lift 1 */
-#define FACE_EMOJI_MOUTH_Y 70           /* px below the screen middle */
-#define FACE_EMOJI_MOUTH_W 44
-#define FACE_EMOJI_MOUTH_H 16
+#define FACE_EMOJI_BROW_LEN (44 * FACE_SCALE)
+#define FACE_EMOJI_BROW_GAP (12 * FACE_SCALE)  /* px above the eye */
+#define FACE_EMOJI_BROW_TILT_PX (14 * FACE_SCALE)  /* inner end up (sad) or down (angry) at tilt 1 */
+#define FACE_EMOJI_BROW_LIFT_PX (12 * FACE_SCALE)  /* raised brows (surprised) at lift 1 */
+#define FACE_EMOJI_MOUTH_Y (70 * FACE_SCALE)  /* px below the screen middle */
+#define FACE_EMOJI_MOUTH_W (44 * FACE_SCALE)
+#define FACE_EMOJI_MOUTH_H (16 * FACE_SCALE)
 #define FACE_EMOJI_MOUTH_GAZE 0.5f      /* the mouth follows the gaze this much */
 #define FACE_SCARED_MS 1500             /* "scared" anim: > < and gritted teeth */
 #define FACE_IDEA_MS 2200               /* "idea" anim: lightbulb eyes */
@@ -143,7 +147,7 @@ typedef enum {
     FACE_EYE_BLOB,    /* the big filled eye (lids, slants, cheek from FACE_EXPR_*) */
     FACE_EYE_HAPPY,   /* ^ ^ happy arcs */
     FACE_EYE_SQUEEZE, /* > < squeezed shut */
-    FACE_EYE_DROOPY   /* drooping arcs, outer ends low */
+    FACE_EYE_DROOPY   /* smooth downward arcs (sad) */
 } face_emoji_eye_t;
 
 typedef enum {
@@ -166,6 +170,7 @@ typedef struct {
     float brow_tilt;   /* +1 sad (inner ends up), -1 angry (inner ends down) */
     float brow_lift;   /* 0..1 raised */
     float mouth_scale; /* mild faces also scale this by intensity */
+    float mouth_side;  /* px, shift the mouth toward where the eyes look (0: centered) */
 } face_emoji_t;
 
 /* Below FACE_EMOJI_INTENSITY: filled eyes with a mild mouth (none when neutral). */
@@ -174,13 +179,13 @@ typedef struct {
 #define FACE_EMOJI_MILD_SAD {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_FROWN, .mouth_scale = 0.9f}
 #define FACE_EMOJI_MILD_ANGRY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_FLAT, .mouth_scale = 0.9f}
 #define FACE_EMOJI_MILD_SURPRISED {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_O, .mouth_scale = 0.7f}
-#define FACE_EMOJI_CURIOUS {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_POUT, .mouth_scale = 1.0f}
+#define FACE_EMOJI_CURIOUS {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_FLAT, .mouth_scale = 0.5f, \
+                            .mouth_side = 20.0f}
 #define FACE_EMOJI_SLEEPY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_NONE, .mouth_scale = 1.0f}
 
 /* At or above FACE_EMOJI_INTENSITY: full emoji faces. */
 #define FACE_EMOJI_HAPPY {.eyes = FACE_EYE_HAPPY, .mouth = FACE_MOUTH_OPEN_SMILE, .mouth_scale = 1.0f}
-#define FACE_EMOJI_SAD {.eyes = FACE_EYE_DROOPY, .mouth = FACE_MOUTH_WOBBLY, .brows = 1, \
-                        .brow_tilt = 1.0f, .mouth_scale = 1.0f}
+#define FACE_EMOJI_SAD {.eyes = FACE_EYE_DROOPY, .mouth = FACE_MOUTH_WOBBLY, .mouth_scale = 1.0f}
 #define FACE_EMOJI_ANGRY {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_GRITTED, .brows = 1, \
                           .brow_tilt = -1.0f, .mouth_scale = 1.0f}
 #define FACE_EMOJI_SURPRISED {.eyes = FACE_EYE_BLOB, .mouth = FACE_MOUTH_O, .brows = 1, \
@@ -188,15 +193,15 @@ typedef struct {
 #define FACE_EMOJI_SCARED {.eyes = FACE_EYE_SQUEEZE, .mouth = FACE_MOUTH_GRITTED, .mouth_scale = 0.9f}
 
 /* ---- Glyph eyes: each eye becomes a vector symbol for a while ------------------------- */
-#define FACE_GLYPH_SIZE 92              /* px, glyph box at scale 1 */
+#define FACE_GLYPH_SIZE (92 * FACE_SCALE)  /* px, glyph box at scale 1 */
 #define FACE_GLYPH_POP_SQUASH 0.35f     /* squash/stretch while a glyph pops in or out */
 #define FACE_GLYPH_SWAP_BELOW 0.08f     /* swap glyphs once the old one has shrunk to this */
 #define FACE_COLOR_HEART 0xFF4F7B
 #define FACE_COLOR_STAR 0xFFD43B
 #define FACE_COLOR_BULB 0xFFE066
 #define FACE_COLOR_BULB_BASE 0xB8C2CC
-#define FACE_GLYPH_STROKE 11            /* px, x and spiral line width */
-#define FACE_CLOSED_STROKE 8            /* px, closed-eye arc width */
+#define FACE_GLYPH_STROKE (11 * FACE_SCALE)  /* px, x and spiral line width */
+#define FACE_CLOSED_STROKE (8 * FACE_SCALE)  /* px, closed-eye arc width */
 #define FACE_SPIRAL_DEG_PER_S 540.0f
 #define FACE_HEARTS_MS 2600             /* hearts anim: heart eyes (+ blush) */
 #define FACE_STARS_MS 2200
@@ -204,32 +209,32 @@ typedef struct {
 #define FACE_SLEEP_CLOSED_INTENSITY 95  /* sleepy at or above this shows closed eyes */
 
 /* ---- Accessories: overlays around the eyes ------------------------------------------- */
-#define FACE_COLOR_BLUSH 0xFF6F91
+#define FACE_COLOR_BLUSH 0xFF8FB1
 #define FACE_COLOR_WATER 0x7CC8FF       /* tear, sweat */
 #define FACE_COLOR_MARK 0xFFC233        /* question and exclamation marks */
 #define FACE_COLOR_NOTE 0xB79CFF        /* music notes */
 #define FACE_COLOR_ZZZ 0xA9C4FF
 #define FACE_BLUSH_MS 3000
-#define FACE_BLUSH_OPA 170              /* 0-255 at the center (three soft layers) */
-#define FACE_BLUSH_W 46
-#define FACE_BLUSH_H 16
-#define FACE_BLUSH_DY 14                /* px below the eye */
+#define FACE_BLUSH_OPA 120              /* 0-255 at the center (three soft layers) */
+#define FACE_BLUSH_W (54 * FACE_SCALE)
+#define FACE_BLUSH_H (19 * FACE_SCALE)
+#define FACE_BLUSH_DY (14 * FACE_SCALE) /* px below the eye */
 #define FACE_TEARS_MS 3200              /* "tear" anim: two streams, two loops */
 #define FACE_TEARS_PERIOD_MS 1600       /* one drop cycle down each stream */
-#define FACE_TEARS_LEN_PX 78            /* stream length below the eye */
-#define FACE_TEARS_W 6                  /* stream width */
-#define FACE_TEARS_OPA 110              /* stream opacity (drops are opaque) */
-#define FACE_TEAR_SIZE 8                /* drop radius */
+#define FACE_TEARS_LEN_PX (80 * FACE_SCALE)  /* stream length, from each eye's outer-bottom corner */
+#define FACE_TEARS_W (9 * FACE_SCALE)    /* stream width */
+#define FACE_TEARS_OPA 130               /* stream opacity (drops are opaque) */
+#define FACE_TEAR_SIZE (4 * FACE_SCALE)  /* drop radius: drops slide inside the stream */
 #define FACE_SWEAT_MS 1600
-#define FACE_SWEAT_SIZE 8
+#define FACE_SWEAT_SIZE (8 * FACE_SCALE)
 #define FACE_SWEAT_SLIDE_PX 24
 #define FACE_ZZZ_MS 2600
-#define FACE_ZZZ_SIZE 14                /* first Z; later ones grow */
-#define FACE_ZZZ_RISE_PX 64
+#define FACE_ZZZ_SIZE (14 * FACE_SCALE)  /* first Z; later ones grow */
+#define FACE_ZZZ_RISE_PX 40
 #define FACE_QUESTION_MS 2200
 #define FACE_EXCLAIM_MS 1300
-#define FACE_MARK_SIZE 40               /* height of ? and ! */
+#define FACE_MARK_SIZE (40 * FACE_SCALE)  /* height of ? and ! */
 #define FACE_MUSIC_MS 2600
-#define FACE_MUSIC_RISE_PX 54
+#define FACE_MUSIC_RISE_PX 40
 
 #endif /* PETBOT_FACE_STYLE_H */

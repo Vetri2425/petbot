@@ -73,7 +73,8 @@ static struct {
     uint32_t override_ms;     /* > 0 while a temporary face shows */
     bool tears_loop;          /* sad enough to cry */
     uint32_t tears_t;         /* ms, drives the drops down the streams */
-    spring_t brow_tilt, brow_lift, mouth_scale;
+    spring_t brow_tilt, brow_lift, mouth_scale, mouth_side;
+    float mouth_dir; /* +1 / -1: the side the eyes last looked toward (screen x) */
 
     face_expr_t target; /* mood expression scaled by intensity */
     const char * mood;
@@ -273,6 +274,10 @@ static void step_springs(float dt)
                 FACE_SPRING_GLYPH_C, dt);
     spring_step(&s.brow_tilt, s.emoji_want.brow_tilt, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
     spring_step(&s.brow_lift, s.emoji_want.brow_lift, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    if(s.dest_x > 2.0f) s.mouth_dir = 1.0f;
+    if(s.dest_x < -2.0f) s.mouth_dir = -1.0f;
+    spring_step(&s.mouth_side, s.emoji_want.mouth_side * s.mouth_dir, FACE_SPRING_SHAPE_K,
+                FACE_SPRING_SHAPE_C, dt);
     spring_step(&s.mouth_scale, s.emoji_want.mouth_scale, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C,
                 dt);
 }
@@ -340,7 +345,7 @@ static void build_emoji_render(emoji_render_t * l, float hop_dy)
     l->brow_lift = s.brow_lift.x;
     l->mouth_scale = fmaxf(0.0f, s.mouth_scale.x);
     const float dy = (s.eye[0][P_DY].x + s.eye[1][P_DY].x) / 2.0f;
-    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_EMOJI_MOUTH_GAZE;
+    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_EMOJI_MOUTH_GAZE + s.mouth_side.x;
     l->mouth_y = FACE_SCREEN_H / 2.0f + FACE_EMOJI_MOUTH_Y + dy * 0.5f +
                  s.gaze_y.x * FACE_EMOJI_MOUTH_GAZE + hop_dy;
 }
@@ -432,6 +437,7 @@ lv_obj_t * face_init(lv_obj_t * parent)
     s.idle = true;
     s.rng = 0x5eed1234u;
     s.style = FACE_DEFAULT_STYLE;
+    s.mouth_dir = 1.0f; /* default: toward the robot's left (screen right), the curious eye */
     const face_emoji_t calm = FACE_EMOJI_CALM;
     s.emoji_mood = s.emoji_want = s.emoji_shown = calm;
     s.mouth_scale.x = calm.mouth_scale;

@@ -151,7 +151,7 @@ static void draw_eye(lv_layer_t * layer, int32_t ox, int32_t oy, const eye_geom_
 
 /* ---- emoji style: line-art eyes, eyebrows and a mouth, all with a soft glow ---- */
 
-#define LINE_MAX_PTS 20
+#define LINE_MAX_PTS (FACE_CURVE_SEGMENTS + 1)
 
 typedef struct {
     float x[LINE_MAX_PTS], y[LINE_MAX_PTS];
@@ -170,8 +170,8 @@ static void poly_add(poly_t * p, float x, float y)
 /* Quadratic curve from (x0,y0) to (x1,y1) pulled toward (cx,cy), as a polyline. */
 static void poly_curve(poly_t * p, float x0, float y0, float cx, float cy, float x1, float y1)
 {
-    for(int i = 0; i <= 16; ++i) { /* 16 chords: smooth even with the wide glow */
-        const float t = i / 16.0f, u = 1.0f - t;
+    for(int i = 0; i <= FACE_CURVE_SEGMENTS; ++i) {
+        const float t = (float)i / FACE_CURVE_SEGMENTS, u = 1.0f - t;
         poly_add(p, u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1);
     }
 }
@@ -254,9 +254,8 @@ static void draw_emoji_eye(lv_layer_t * layer, float cx, float cy, float w, floa
             poly_add(&p, cx - outer * w * 0.34f, cy);
             poly_add(&p, cx + outer * w * 0.38f, cy + h * 0.42f);
             break;
-        case FACE_EYE_DROOPY: /* a sagging line, hanging down toward the outer corner */
-            poly_curve(&p, cx - outer * w / 2, cy - h * 0.2f, cx + outer * w * 0.1f, cy + h * 0.3f,
-                       cx + outer * w / 2, cy + h * 0.38f);
+        case FACE_EYE_DROOPY: /* a smooth, low downward arc: flatter than the happy ^ */
+            poly_curve(&p, cx - w / 2, cy + h * 0.32f, cx, cy - h * 0.3f, cx + w / 2, cy + h * 0.32f);
             break;
         default: return;
     }
@@ -288,10 +287,11 @@ static void draw_mouth(lv_layer_t * layer, float mx, float my, uint8_t kind, flo
         case FACE_MOUTH_FROWN:
             poly_curve(&p, mx - w / 2, my + h * 0.4f, mx, my - h * 0.9f, mx + w / 2, my + h * 0.4f);
             break;
-        case FACE_MOUTH_WOBBLY: /* a frown that shakes */
-            for(int i = 0; i <= 6; ++i) {
-                const float t = i / 6.0f, arch = 4.0f * t * (1.0f - t); /* 0 at ends, 1 mid */
-                poly_add(&p, mx - w / 2 + w * t, my + h * 0.35f - arch * h * 0.6f + ((i % 2) ? -1 : 1) * h * 0.18f);
+        case FACE_MOUTH_WOBBLY: /* a frown with a smooth wave in it */
+            for(int i = 0; i <= FACE_CURVE_SEGMENTS; ++i) {
+                const float t = (float)i / FACE_CURVE_SEGMENTS, arch = 4.0f * t * (1.0f - t);
+                poly_add(&p, mx - w / 2 + w * t,
+                         my + h * 0.35f - arch * h * 0.6f + sinf(t * 5.0f * PI_F) * h * 0.14f);
             }
             break;
         case FACE_MOUTH_O: glow_ring(layer, mx, my, h * 0.8f, stroke * 0.9f); return;
@@ -419,12 +419,12 @@ typedef struct {
     float x, y;
 } pt_t;
 
-/* Top of the tear stream under an eye. */
+/* Top of the tear stream: each eye's outer-bottom corner. */
 static pt_t tears_top(const face_render_t * r, int side)
 {
     const eye_geom_t * g = &r->eyes[side];
-    const float inner = side ? -1.0f : 1.0f;
-    return (pt_t){g->cx + inner * g->w * 0.18f, g->cy + g->h * r->glyph_h / 2.0f - 4.0f};
+    const float outer = side ? 1.0f : -1.0f; /* away from the other eye */
+    return (pt_t){g->cx + outer * g->w * 0.34f, g->cy + g->h * r->glyph_h / 2.0f - 6.0f};
 }
 
 /* Two streams running down from the eyes, with drops sliding down them in a loop. */
@@ -441,7 +441,7 @@ static void draw_tears(lv_layer_t * layer, int32_t ox, int32_t oy, const face_re
             float q = r->tears_phase + 0.5f * k + 0.25f * side;
             q -= floorf(q);
             if(q * FACE_TEARS_LEN_PX > len) continue;
-            const float size = FACE_TEAR_SIZE * (0.65f + 0.35f * q);
+            const float size = FACE_TEAR_SIZE * (0.75f + 0.25f * q); /* stays inside the stream */
             drop(layer, x, y + q * FACE_TEARS_LEN_PX, size, FACE_COLOR_WATER,
                  opa_of(f * (q > 0.8f ? (1.0f - q) / 0.2f : 1.0f)));
         }
@@ -454,22 +454,23 @@ static pt_t sweat_pos(const face_render_t * r, float p)
     return (pt_t){g->cx + g->w / 2.0f + 9.0f, g->cy - g->h / 2.0f + 8.0f + FACE_SWEAT_SLIDE_PX * p};
 }
 
+/* Accessories sit above the eyes' outer corners so they stay on screen at any FACE_SCALE. */
 static pt_t mark_pos(const face_render_t * r)
 {
     const eye_geom_t * g = &r->eyes[1];
-    return (pt_t){g->cx + g->w / 2.0f + 26.0f, g->cy - g->h / 2.0f - 2.0f};
+    return (pt_t){g->cx + g->w * 0.4f, g->cy - g->h / 2.0f - FACE_MARK_SIZE * 0.55f};
 }
 
 static pt_t zzz_base(const face_render_t * r)
 {
     const eye_geom_t * g = &r->eyes[1];
-    return (pt_t){g->cx + g->w / 2.0f + 2.0f, g->cy - g->h / 2.0f - 6.0f};
+    return (pt_t){g->cx + g->w * 0.2f, g->cy - g->h / 2.0f - 2.0f};
 }
 
 static pt_t music_base(const face_render_t * r)
 {
     const eye_geom_t * g = &r->eyes[0];
-    return (pt_t){g->cx - g->w / 2.0f - 16.0f, g->cy - g->h / 2.0f + 18.0f};
+    return (pt_t){g->cx - g->w * 0.3f, g->cy - g->h / 2.0f - 4.0f};
 }
 
 static void draw_blush(lv_layer_t * layer, int32_t ox, int32_t oy, const face_render_t * r, float p)
@@ -478,11 +479,11 @@ static void draw_blush(lv_layer_t * layer, int32_t ox, int32_t oy, const face_re
     for(int side = 0; side < 2; ++side) {
         const eye_geom_t * g = &r->eyes[side];
         const float cx = ox + g->cx, cy = oy + g->cy + g->h / 2.0f + FACE_BLUSH_DY + FACE_BLUSH_H / 2.0f;
-        /* Soft edge: three stacked ellipses, faint and wide to strong and small. */
+        /* Soft edge: a faint wide halo, a mid ring, then the core at FACE_BLUSH_OPA. */
+        static const float k_grow[3] = {1.44f, 1.22f, 1.0f}, k_opa[3] = {0.33f, 0.5f, 1.0f};
         for(int k = 0; k < 3; ++k) {
-            const float grow = 1.0f + 0.22f * (2 - k);
-            fill_ellipse(layer, cx, cy, FACE_BLUSH_W / 2.0f * grow, FACE_BLUSH_H / 2.0f * grow,
-                         FACE_COLOR_BLUSH, (lv_opa_t)(FACE_BLUSH_OPA * f * 0.4f));
+            fill_ellipse(layer, cx, cy, FACE_BLUSH_W / 2.0f * k_grow[k], FACE_BLUSH_H / 2.0f * k_grow[k],
+                         FACE_COLOR_BLUSH, (lv_opa_t)(FACE_BLUSH_OPA * f * k_opa[k]));
         }
     }
 }
@@ -495,7 +496,7 @@ static void draw_zzz(lv_layer_t * layer, int32_t ox, int32_t oy, const face_rend
         if(q <= 0.0f) continue;
         q = q > 1.0f ? 1.0f : q;
         const float h = FACE_ZZZ_SIZE * (1.0f + 0.35f * i) * (0.7f + 0.5f * q) / 2.0f;
-        const float x = ox + b.x + q * FACE_ZZZ_RISE_PX * 0.55f + i * 6.0f;
+        const float x = ox + b.x + q * FACE_ZZZ_RISE_PX * 0.4f + i * 6.0f;
         const float y = oy + b.y - q * FACE_ZZZ_RISE_PX - i * 4.0f;
         const lv_opa_t opa = opa_of(envelope(q, 0.15f, 0.35f));
         const float wdt = h * 0.4f > 2.0f ? h * 0.4f : 2.0f;
@@ -651,7 +652,7 @@ int face_render_boxes(const face_render_t * r, lv_area_t * out, int max)
     if(a[FACE_ACC_ZZZ] >= 0.0f) {
         const pt_t b = zzz_base(r);
         const float big = FACE_ZZZ_SIZE * 1.7f * 1.2f;
-        ADD(box(b.x - big, b.y - FACE_ZZZ_RISE_PX - 8 - big, b.x + FACE_ZZZ_RISE_PX * 0.55f + 12 + big,
+        ADD(box(b.x - big, b.y - FACE_ZZZ_RISE_PX - 8 - big, b.x + FACE_ZZZ_RISE_PX * 0.4f + 12 + big,
                 b.y + big));
     }
     if(a[FACE_ACC_QUESTION] >= 0.0f || a[FACE_ACC_EXCLAIM] >= 0.0f) {
