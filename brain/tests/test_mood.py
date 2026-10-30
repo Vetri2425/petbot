@@ -57,7 +57,10 @@ def test_personality_loads() -> None:
     assert P.max_messages_per_s == 5
     pickup = P.reflexes["imu pickup"]
     assert (pickup.mood, pickup.intensity, pickup.hold_s) == ("surprised", 90, 1.5)
-    assert P.reflexes["touch head"].anim == "blink" and P.reflexes["touch head"].only_when_asleep
+    head = P.reflexes["touch head"]
+    assert head.anims == (("blink", 0.0),) and head.only_when_asleep
+    assert P.reflexes["imu fall"].anims == (("exclaim", 0.0), ("tear", 0.9))
+    assert set(P.triggers) == {"hearts", "zzz", "question"}
     assert set(P.mood_ranges) == {"happy", "sad", "angry", "sleepy", "curious", "surprised"}
     assert len(P.impulses) == sum(len(d) for d in EVENTS.values())
 
@@ -77,9 +80,19 @@ def test_personality_loads() -> None:
         lambda d: d["arousal"].update(baseline="high"),  # not a number
         lambda d: d["reflexes"]["imu"]["pickup"].update(mood="startled"),  # unknown mood
         lambda d: d["reflexes"]["imu"]["pickup"].pop("hold_s"),  # mood needs hold_s
-        lambda d: d["reflexes"]["imu"].update(shake={}),  # needs a mood or an anim
+        lambda d: d["reflexes"]["imu"].update(tilt={}),  # needs a mood or anims
         lambda d: d["reflexes"]["touch"]["head"].update(only_when_asleep="yes"),  # not a bool
-        lambda d: d["reflexes"]["touch"]["head"].update(anim="Blink"),  # invalid anim
+        lambda d: d["reflexes"]["touch"]["head"].update(anims=[{"anim": "Blink", "after_s": 0}]),
+        # valid on the wire but not a known anim: config may only use the known list
+        lambda d: d["reflexes"]["touch"]["head"].update(anims=[{"anim": "spin", "after_s": 0}]),
+        lambda d: d["reactions"]["touch"].update(left=["wave_left", "x_1"]),
+        lambda d: d["idle"].update(anims=["blink", "wink"]),
+        lambda d: d["triggers"]["zzz"].update(anim="snore"),
+        lambda d: d["reflexes"]["imu"]["fall"]["anims"][1].pop("after_s"),  # entry incomplete
+        lambda d: d["reflexes"]["imu"]["shake"].update(anims=[]),  # empty sequence
+        lambda d: d["triggers"].update(empty={"anim": "music", "hold_s": 1, "cooldown_s": 1}),
+        lambda d: d["triggers"]["question"].update(above={"hunger": 0.5}),  # unknown signal
+        lambda d: d["triggers"]["hearts"].update(mood="ecstatic"),  # unknown mood
     ],
 )
 def test_personality_is_strict(mutate) -> None:
@@ -238,7 +251,8 @@ def test_sleepy_dozes_off_and_an_event_wakes_it() -> None:
     assert s.asleep and s.mood == "sleepy" and s.intensity == 100
     assert Mood("sleepy", 100) in moods(sent)
     _, quiet = run_ticks(s, 60, rng)
-    assert not [m for _, m in quiet if isinstance(m, Anim)]  # no idle anims while asleep
+    asleep_anims = {m.name for _, m in quiet if isinstance(m, Anim)}
+    assert asleep_anims <= {"zzz"}  # no idle glances/blinks while asleep, only snoring
     s, woke = step(s, [HEAD], TICK_S, P, rng)
     assert not s.asleep
     assert woke[0] == Anim("blink")  # reflex: blink, then the wake-up mood
@@ -350,6 +364,70 @@ def test_reflex_outputs_respect_the_rate_limit() -> None:
 def test_touch_head_reflex_only_when_asleep() -> None:
     _, out = step(initial_state(P), [HEAD], TICK_S, P, random.Random(0))
     assert Anim("blink") not in out
+
+
+def anim_times(sent: list[tuple[float, Message]], name: str) -> list[float]:
+    return [round(t, 2) for t, m in sent if m == Anim(name)]
+
+
+def test_every_configured_anim_is_known() -> None:
+    """CI check: personality.toml may only reference anims in the protocol's known list."""
+    from petbot_brain.protocol import ANIMS
+
+    used = set(P.idle_anims) | {a for names in P.reactions.values() for a in names}
+    used |= {a for r in P.reflexes.values() for a, _ in r.anims}
+    used |= {t.anim for t in P.triggers.values()}
+    assert used <= set(ANIMS)
+    assert {"hearts", "zzz", "question", "dizzy", "exclaim", "tear"} <= used
+
+
+def test_fall_sends_exclaim_then_tear_on_the_engine_clock() -> None:
+    engine = MoodEngine(P, seed=0)
+    engine.update(100.0)
+    out = engine.update(101.0, [Event("imu", "fall")])
+    assert out[0] == Anim("exclaim") and Mood("surprised", 100) in out
+    assert Anim("tear") not in engine.update(101.85)
+    assert engine.update(101.95)[0] == Anim("tear")  # 0.9 s after the fall
+
+
+def test_shake_dizzy_has_a_cooldown() -> None:
+    shakes = {i: [Event("imu", "shake")] for i in range(0, 30, 4)}  # every 0.4 s for 3 s
+    _, sent = run_ticks(initial_state(P), 4, random.Random(0), shakes)
+    times = anim_times(sent, "dizzy")
+    assert len(times) == 2 and times[1] - times[0] >= P.reflexes["imu shake"].cooldown_s
+
+
+def test_hearts_need_sustained_happy_petting() -> None:
+    pats = {i: [HEAD] for i in range(0, 300, 30)}  # a pat every 3 s for 30 s
+    _, sent = run_ticks(initial_state(P), 30, random.Random(0), pats)
+    hearts = anim_times(sent, "hearts")
+    assert len(hearts) == 1 and hearts[0] >= P.triggers["hearts"].hold_s
+
+    # Just as happy, but nobody is petting it: no hearts.
+    s = initial_state(P)
+    _, sent = run_ticks(replace(s, valence=1.0), 30, random.Random(0))
+    assert not anim_times(sent, "hearts")
+
+
+def test_zzz_loops_while_asleep_and_stops_on_waking() -> None:
+    rng = random.Random(0)
+    s = replace(initial_state(P), asleep=True, energy=0.5, mood="sleepy", intensity=100)
+    s, sent = run_ticks(s, 20, rng)
+    zzz = anim_times(sent, "zzz")
+    assert len(zzz) == 5  # at 2 s, then every 4 s
+    assert all(b - a == pytest.approx(P.triggers["zzz"].cooldown_s) for a, b in zip(zzz, zzz[1:]))
+    s, _ = step(s, [HEAD], TICK_S, P, rng)
+    _, sent = run_ticks(s, 20, rng)
+    assert not anim_times(sent, "zzz")
+
+
+def test_question_once_per_boredom_peak() -> None:
+    rng = random.Random(0)
+    s, sent = run_ticks(initial_state(P), 1800, rng)  # 30 min alone
+    assert len(anim_times(sent, "question")) == 1
+    s, _ = step(s, [HEAD], TICK_S, P, rng)  # boredom drops...
+    _, sent = run_ticks(s, 1200, rng)  # ...and peaks again
+    assert len(anim_times(sent, "question")) == 1
 
 
 # ---- scenarios (sim/mood_replay.py) ----

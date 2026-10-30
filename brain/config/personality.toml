@@ -101,10 +101,12 @@ impulse = 0.15            # each impulse is scaled by 1 +/- this
 left = ["wave_left", "look_left"]
 right = ["wave_right", "look_right"]
 
-# ---- Reflexes: a short fixed reaction shown over the mood, then control goes back -----
-# mood/intensity/hold_s: shown instead of the mood for hold_s; anim: sent first.
-# only_when_asleep: the reflex fires only if the event arrives while asleep.
-# The event still applies its impulse to the mood model as usual.
+# ---- Reflexes: a short fixed reaction to one event, shown over the mood ---------------
+# mood/intensity/hold_s: shown instead of the mood for hold_s, then control goes back.
+# anims: sent in order, each after_s seconds after the event (before any MOOD).
+# only_when_asleep: fires only if the event arrives while asleep.
+# cooldown_s: won't fire again within this long (the event still affects the mood).
+# The event always applies its impulse to the mood model as usual.
 [reflexes.imu.pickup]
 mood = "surprised"
 intensity = 90
@@ -114,10 +116,40 @@ hold_s = 1.5
 mood = "surprised"
 intensity = 100
 hold_s = 1.0
+anims = [{ anim = "exclaim", after_s = 0.0 }, { anim = "tear", after_s = 0.9 }]
+
+[reflexes.imu.shake]
+anims = [{ anim = "dizzy", after_s = 0.0 }]  # the face spins its eyes for ~2 s
+cooldown_s = 2.0
 
 [reflexes.touch.head]
-anim = "blink"
+anims = [{ anim = "blink", after_s = 0.0 }]
 only_when_asleep = true
+
+# ---- Triggers: anims sent when a state condition has held for hold_s ------------------
+# Conditions (all given ones must hold): asleep; mood + min_intensity (shown mood);
+# above = { <signal> = threshold }; touched_within_s (a touch event this recently).
+# cooldown_s: repeat period while the condition holds; 0 = once until it clears again.
+[triggers.hearts]         # sustained happiness from petting
+anim = "hearts"
+mood = "happy"
+min_intensity = 90
+touched_within_s = 6.0
+hold_s = 10.0
+cooldown_s = 20.0
+
+[triggers.zzz]            # snoring while asleep
+anim = "zzz"
+asleep = true
+hold_s = 2.0
+cooldown_s = 4.0
+
+[triggers.question]       # "anyone there?" at peak boredom
+anim = "question"
+asleep = false
+above = { boredom = 0.9 }
+hold_s = 0.0
+cooldown_s = 0.0
 
 # ---- State -> mood -------------------------------------------------------------------
 # A mood's score is the product of its ramps: [start, full] maps the signal from 0 at

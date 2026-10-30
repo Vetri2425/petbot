@@ -27,11 +27,26 @@ class Drive:
 class Reflex:
     """A short fixed reaction to one event, shown over the mood, then control goes back."""
 
-    mood: str | None  # shown instead of the mood for hold_s (None: anim only)
+    mood: str | None  # shown instead of the mood for hold_s (None: anims only)
     intensity: int
     hold_s: float
-    anim: str | None  # sent before any MOOD
+    anims: tuple[tuple[str, float], ...]  # (anim, after_s), sent before any MOOD when due
     only_when_asleep: bool
+    cooldown_s: float  # the reflex won't fire again within this long
+
+
+@dataclass(frozen=True)
+class Trigger:
+    """An anim sent when a state condition has held for hold_s (not tied to one event)."""
+
+    anim: str
+    asleep: bool | None  # must be asleep (True) / awake (False); None: either
+    mood: str | None  # shown mood must be this...
+    min_intensity: int  # ...at least this strong
+    above: Mapping[str, float]  # signal -> threshold, all must be exceeded
+    touched_within_s: float | None  # a touch event must have come this recently
+    hold_s: float
+    cooldown_s: float  # repeat period while the condition holds; 0: once per episode
 
 
 @dataclass(frozen=True)
@@ -63,6 +78,7 @@ class Personality:
     jitter: float
     reactions: Mapping[str, tuple[str, ...]]  # "touch left" -> ("wave_left", "look_left")
     reflexes: Mapping[str, Reflex]  # "imu pickup" -> Reflex(...)
+    triggers: Mapping[str, Trigger]  # name -> Trigger(...), checked in name order
     neutral_score: float
     neutral_intensity: int
     min_intensity: int
@@ -164,26 +180,73 @@ def _impulse(t: _Table, signals: tuple[str, ...]) -> dict[str, float]:
     return impulse
 
 
+def _mood_name(t: _Table, key: str) -> str:
+    mood = t.raw(key)
+    if mood not in MOODS:
+        raise PersonalityError(f"{t.where(key)}: unknown mood {mood!r}")
+    return mood
+
+
+def _anim_sequence(t: _Table, key: str) -> tuple[tuple[str, float], ...]:
+    """anims = [{ anim = "exclaim", after_s = 0.0 }, { anim = "tear", after_s = 0.8 }]"""
+    items = t.raw(key)
+    if not isinstance(items, list) or not items:
+        raise PersonalityError(f"{t.where(key)} must be a non-empty list of {{anim, after_s}}")
+    sequence = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise PersonalityError(f"{t.where(key)}[{i}] must be {{ anim = ..., after_s = ... }}")
+        entry = _Table(item, f"{t.where(key)}[{i}]")
+        anim = _check_anim(entry.raw("anim"), entry.where("anim"))
+        sequence.append((anim, entry.num("after_s", 0.0)))
+        entry.done()
+    return tuple(sequence)
+
+
 def _reflex(t: _Table) -> Reflex:
     mood = intensity = hold_s = None
     if t.has("mood"):
-        mood = t.raw("mood")
-        if mood not in MOODS:
-            raise PersonalityError(f"{t.where('mood')}: unknown mood {mood!r}")
+        mood = _mood_name(t, "mood")
         intensity = t.integer("intensity", 0, 100)
         hold_s = t.num("hold_s", 0.001)
-    anim = _check_anim(t.raw("anim"), t.where("anim")) if t.has("anim") else None
+    anims = _anim_sequence(t, "anims") if t.has("anims") else ()
     only_when_asleep = t.boolean("only_when_asleep") if t.has("only_when_asleep") else False
+    cooldown_s = t.num("cooldown_s", 0.0) if t.has("cooldown_s") else 0.0
     t.done()
-    if mood is None and anim is None:
-        raise PersonalityError(f"[{t.where('')[:-1]}] needs a mood or an anim")
+    if mood is None and not anims:
+        raise PersonalityError(f"[{t.where('')[:-1]}] needs a mood or anims")
     return Reflex(
         mood,
         intensity if intensity is not None else 0,
         hold_s if hold_s is not None else 0.0,
-        anim,
+        anims,
         only_when_asleep,
+        cooldown_s,
     )
+
+
+def _trigger(t: _Table) -> Trigger:
+    anim = _check_anim(t.raw("anim"), t.where("anim"))
+    asleep = t.boolean("asleep") if t.has("asleep") else None
+    mood = _mood_name(t, "mood") if t.has("mood") else None
+    min_intensity = t.integer("min_intensity", 0, 100) if t.has("min_intensity") else 0
+    above: dict[str, float] = {}
+    if t.has("above"):
+        above_t = t.table("above")
+        for signal in above_t.keys():
+            if signal not in SIGNALS:
+                raise PersonalityError(f"{above_t.where(signal)}: unknown signal")
+            above[signal] = above_t.num(signal, -1.0, 1.0)
+        above_t.done()
+    touched = t.num("touched_within_s", 0.0) if t.has("touched_within_s") else None
+    trigger = Trigger(
+        anim, asleep, mood, min_intensity, above, touched, t.num("hold_s", 0.0),
+        t.num("cooldown_s", 0.0),
+    )  # fmt: skip
+    t.done()
+    if asleep is None and mood is None and not above and touched is None:
+        raise PersonalityError(f"[{t.where('')[:-1]}] needs at least one condition")
+    return trigger
 
 
 def _drive(t: _Table) -> Drive:
@@ -278,6 +341,10 @@ def parse(data: Mapping[str, Any]) -> Personality:
         source_t.done()
     reflexes_t.done()
 
+    triggers_t = root.table("triggers")
+    triggers = {name: _trigger(triggers_t.table(name)) for name in sorted(triggers_t.keys())}
+    triggers_t.done()
+
     moods_t = root.table("moods")
     mood_values = (
         moods_t.num("neutral_score", 0.0, 1.0),
@@ -357,6 +424,7 @@ def parse(data: Mapping[str, Any]) -> Personality:
         jitter=jitter,
         reactions=reactions,
         reflexes=reflexes,
+        triggers=triggers,
         neutral_score=mood_values[0],
         neutral_intensity=mood_values[1],
         min_intensity=mood_values[2],
