@@ -54,8 +54,8 @@ void setup() {
     petbot::logBegin();
     petbot::logLine("%s", "");
     petbot::logLine("PetBot firmware v0.1.0 - boot OK");
+    petbot::display::begin();  // before the link, so its queue exists for the first MOOD/ANIM
     petbot::link::begin();
-    petbot::display::begin();
     printHelp();
 }
 

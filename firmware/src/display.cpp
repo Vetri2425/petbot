@@ -20,14 +20,14 @@ namespace {
 namespace proto = petbot::protocol;
 
 const uint32_t kFramePeriodMs = 33;  // ~30 fps
-const UBaseType_t kQueueDepth = 8;
+const UBaseType_t kQueueDepth = 8;  // also holds messages that arrive while LVGL starts
 const uint32_t kTaskStackBytes = 12 * 1024;
 const UBaseType_t kTaskPriority = 2;  // below the link RX task (3)
 const uint32_t kPanelWidth = 240;     // native portrait size; rotated to 320x240
 const uint32_t kPanelHeight = 320;
 
 QueueHandle_t g_queue = nullptr;
-volatile bool g_running = false;
+volatile bool g_disabled = false;  // face failed to start; nothing will drain the queue
 void* g_pool = nullptr;
 SPIClass g_spi(FSPI);
 
@@ -156,11 +156,11 @@ void apply(const proto::Message& msg) {
 
 void faceTask(void*) {
     if (!startLvgl()) {
+        g_disabled = true;
         logLine("[display] face disabled; link keeps running");
         vTaskDelete(nullptr);
         return;
     }
-    g_running = true;
     uint32_t prev = millis();
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
@@ -185,9 +185,11 @@ void begin() {
 }
 
 void post(const proto::Message& msg) {
-    if (!g_running) return;  // face disabled (already logged) or still starting
+    // Queue even while the face is still starting; it drains the queue once LVGL is up.
+    if (g_queue == nullptr || g_disabled) return;  // face never started (logged at boot)
     if (xQueueSend(g_queue, &msg, 0) != pdTRUE) {
-        logLine("[display] WARN face queue full, dropping a message");
+        logLine("[display] WARN face queue full (%u), dropping a message",
+                static_cast<unsigned>(kQueueDepth));
     }
 }
 

@@ -6,12 +6,14 @@
 namespace petbot {
 namespace display {
 
-// Start the face task. Never blocks; if the display can't start (no memory), it logs
-// and the rest of the firmware (link, debug keys) keeps running.
+// Create the face queue and start the face task. Call before link::begin() so the
+// queue exists before any MOOD/ANIM can arrive. Never blocks; if the display can't start
+// (no memory), it logs and the rest of the firmware (link, debug keys) keeps running.
 void begin();
 
 // Hand a MOOD or ANIM to the face. Safe to call from any task: it only enqueues,
-// LVGL is called from the face task alone. Drops (with a warning) if the queue is full.
+// LVGL is called from the face task alone. Messages that arrive while the face is
+// still starting are queued, not lost. Drops (with a warning) only if the queue is full.
 void post(const protocol::Message& msg);
 
 }  // namespace display
