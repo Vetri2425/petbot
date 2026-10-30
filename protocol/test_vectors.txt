@@ -53,6 +53,8 @@ VALID ANIM sweat  # => ANIM sweat
 VALID ANIM question  # => ANIM question
 VALID ANIM exclaim  # => ANIM exclaim
 VALID ANIM music  # => ANIM music
+VALID ANIM scared  # => ANIM scared
+VALID ANIM idea  # => ANIM idea
 
 # --- EVT: every source/detail
 VALID EVT touch head  # => EVT touch head

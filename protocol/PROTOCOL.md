@@ -59,7 +59,7 @@ Left/right in names (`touch left`, `wave_left`, `look_left`) is the robot's own 
 Animation names: any `[a-z0-9_]+` token is valid on the wire. A receiver that doesn't support a
 name logs it and skips it. The known set (v1) is the only set the brain sends:
 
-Animations (v1): `blink`, `look_left`, `look_right`, `wave_left`, `wave_right`, `hearts`, `stars`, `dizzy`, `zzz`, `tear`, `blush`, `sweat`, `question`, `exclaim`, `music`
+Animations (v1): `blink`, `look_left`, `look_right`, `wave_left`, `wave_right`, `hearts`, `stars`, `dizzy`, `zzz`, `tear`, `blush`, `sweat`, `question`, `exclaim`, `music`, `scared`, `idea`
 
 ### Firmware update
 
