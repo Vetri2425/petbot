@@ -15,9 +15,10 @@ half_life_s = 10.0
 [social]           # rises with touch, falls toward the baseline when ignored
 start = 0.5
 baseline = 0.1
-half_life_s = 900.0
-lonely_below = 0.3        # below this the valence baseline drops (lonely)...
-lonely_valence = -0.4     # ...by this much at social = 0
+half_life_s = 600.0
+lonely_below = 0.4        # below this the valence baseline drops (lonely)...
+lonely_valence = -1.0     # ...by this much at social = 0 (ignored for ~50 min -> sad)
+comfort_when_lonely = 1.2 # extra valence from a social touch, x loneliness (0..1)
 
 [boredom]          # rises toward idle_target when nothing happens; events lower it
 start = 0.0
@@ -132,7 +133,7 @@ override_margin = 0.35    # ...unless it wins by this much (sudden events)
 valence = [0.15, 0.6]
 
 [moods.sad]
-valence = [-0.15, -0.6]
+valence = [-0.35, -0.8]   # neutral band: mild negativity shows neutral, sadness needs a cause
 arousal = [0.6, 0.35]
 
 [moods.angry]

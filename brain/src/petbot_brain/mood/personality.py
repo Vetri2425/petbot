@@ -42,6 +42,7 @@ class Personality:
     social_start: float
     lonely_below: float
     lonely_valence: float
+    comfort_when_lonely: float
     boredom_start: float
     boredom_idle_target: float
     boredom_rise_half_life_s: float
@@ -202,6 +203,7 @@ def parse(data: Mapping[str, Any]) -> Personality:
     social_start = social_t.num("start", 0.0, 1.0)
     lonely_below = social_t.num("lonely_below", 0.0, 1.0)
     lonely_valence = social_t.num("lonely_valence", -1.0, 1.0)
+    comfort_when_lonely = social_t.num("comfort_when_lonely", 0.0, 2.0)
     social = _drive(social_t)
     social_t.done()
 
@@ -336,6 +338,7 @@ def parse(data: Mapping[str, Any]) -> Personality:
         social_start=social_start,
         lonely_below=lonely_below,
         lonely_valence=lonely_valence,
+        comfort_when_lonely=comfort_when_lonely,
         boredom_start=boredom[0],
         boredom_idle_target=boredom[1],
         boredom_rise_half_life_s=boredom[2],

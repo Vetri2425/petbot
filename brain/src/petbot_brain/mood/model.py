@@ -94,11 +94,15 @@ def mood_scores(s: MoodState, p: Personality) -> dict[str, float]:
     return scores
 
 
-def _valence_baseline(s: MoodState, p: Personality) -> float:
+def _loneliness(s: MoodState, p: Personality) -> float:
+    """0 at or above lonely_below, rising to 1 at social = 0."""
     if s.social >= p.lonely_below or p.lonely_below <= 0.0:
-        return p.valence.baseline
-    loneliness = 1.0 - s.social / p.lonely_below  # 0 at the threshold, 1 at social = 0
-    return p.valence.baseline + p.lonely_valence * loneliness
+        return 0.0
+    return 1.0 - s.social / p.lonely_below
+
+
+def _valence_baseline(s: MoodState, p: Personality) -> float:
+    return p.valence.baseline + p.lonely_valence * _loneliness(s, p)
 
 
 def _decay(s: MoodState, p: Personality, dt: float) -> MoodState:
@@ -155,18 +159,23 @@ def _apply_event(
     jitter = 1.0 + rng.uniform(-p.jitter, p.jitter)
     annoyed = level >= p.annoyed_above
     spoil = 0.0
+    comfort = 0.0
     if annoyed:
         impulse, scale = p.annoyance, jitter
         spoil = p.annoyance_spoil * max(0.0, s.valence)  # annoyance wipes out happiness first
     else:
         impulse = p.impulses[key]
         scale = max(p.min_response, p.weaken_per_repeat**level) * jitter
+        if impulse.get("social", 0.0) > 0.0:  # a social touch comforts a lonely pet
+            comfort = p.comfort_when_lonely * _loneliness(s, p) * scale
         if key in p.reactions:
             anims.append(Anim(rng.choice(p.reactions[key])))
 
     s = replace(
         s,
-        valence=_clamp(s.valence + impulse.get("valence", 0.0) * scale - spoil, -1.0, 1.0),
+        valence=_clamp(
+            s.valence + impulse.get("valence", 0.0) * scale - spoil + comfort, -1.0, 1.0
+        ),
         arousal=_clamp(s.arousal + impulse.get("arousal", 0.0) * scale + arousal_kick, 0.0, 1.0),
         social=_clamp(s.social + impulse.get("social", 0.0) * scale, 0.0, 1.0),
         boredom=_clamp(s.boredom + impulse.get("boredom", 0.0) * scale, 0.0, 1.0),
