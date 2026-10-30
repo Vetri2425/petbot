@@ -56,8 +56,10 @@ Mood names: `neutral`, `happy`, `sad`, `angry`, `sleepy`, `curious`, `surprised`
 Left/right in names (`touch left`, `wave_left`, `look_left`) is the robot's own frame
 (ADR 0014): `look_left` turns the eyes to the robot's left, the viewer's right.
 
-Animation names: any `[a-z0-9_]+` token on the wire. The brain currently uses `wave_left`
-and `wave_right`. The full set the firmware supports: TBD, decided by the Phase 1 motion design.
+Animation names: any `[a-z0-9_]+` token is valid on the wire. A receiver that doesn't support a
+name logs it and skips it. The known set (v1) is the only set the brain sends:
+
+Animations (v1): `blink`, `look_left`, `look_right`, `wave_left`, `wave_right`, `hearts`, `stars`, `dizzy`, `zzz`, `tear`, `blush`, `sweat`, `question`, `exclaim`, `music`
 
 ### Firmware update
 

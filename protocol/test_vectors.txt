@@ -39,6 +39,20 @@ VALID ANIM a  # => ANIM a
 VALID ANIM 0  # => ANIM 0
 VALID ANIM _  # => ANIM _
 VALID ANIM x_1  # => ANIM x_1
+# known animations (v1); wave_left/wave_right are above
+VALID ANIM blink  # => ANIM blink
+VALID ANIM look_left  # => ANIM look_left
+VALID ANIM look_right  # => ANIM look_right
+VALID ANIM hearts  # => ANIM hearts
+VALID ANIM stars  # => ANIM stars
+VALID ANIM dizzy  # => ANIM dizzy
+VALID ANIM zzz  # => ANIM zzz
+VALID ANIM tear  # => ANIM tear
+VALID ANIM blush  # => ANIM blush
+VALID ANIM sweat  # => ANIM sweat
+VALID ANIM question  # => ANIM question
+VALID ANIM exclaim  # => ANIM exclaim
+VALID ANIM music  # => ANIM music
 
 # --- EVT: every source/detail
 VALID EVT touch head  # => EVT touch head

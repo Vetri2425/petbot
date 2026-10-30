@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from petbot_brain.protocol import (
+    ANIMS,
     EVENTS,
     MAX_LINE_BYTES,
     MOODS,
@@ -201,3 +202,11 @@ def test_protocol_md_lists_the_same_names() -> None:
         assert re.search(rf"^\| `{source}` \| {re.escape(listed)} \|$", doc, re.MULTILINE)
     documented_sources = re.findall(r"^\| `([a-z_]+)` \| `", doc, re.MULTILINE)
     assert documented_sources == list(EVENTS)
+    anims = ", ".join(f"`{a}`" for a in ANIMS)
+    assert f"Animations (v1): {anims}\n" in doc
+
+
+def test_known_anims_are_valid_and_unique() -> None:
+    assert len(set(ANIMS)) == len(ANIMS)
+    for name in ANIMS:
+        assert parse_line(encode(Anim(name))) == Anim(name)

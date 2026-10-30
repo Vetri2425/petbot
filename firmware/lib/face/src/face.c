@@ -1,19 +1,37 @@
-/* PetBot face. See face.h; all tunables are in face_style.h. */
+/* PetBot face: motion. See face.h; drawing is in face_draw.c; tunables in face_style.h. */
 #include "face.h"
 
 #include <math.h>
 #include <string.h>
 
+#include "face_internal.h"
 #include "face_style.h"
 
 #define PI_F 3.14159265f
-#define DIRTY_MARGIN 4 /* px around an eye's box; lids are drawn up to 2 px outside it */
+#define DIRTY_MARGIN 4 /* px around every drawn box */
 #define EXPR_FIELDS (sizeof(face_expr_t) / sizeof(float))
 
 typedef struct {
     const char * name;
     face_expr_t expr;
 } mood_def_t;
+
+typedef struct {
+    const char * name;
+    face_line_expr_t normal;
+    face_line_expr_t strong; /* shown at/above strong_at intensity */
+    uint8_t strong_at;       /* 101: never */
+} line_mood_t;
+
+static const line_mood_t k_line_moods[] = {
+    {"neutral", FACE_LINE_NEUTRAL, FACE_LINE_NEUTRAL, 101},
+    {"happy", FACE_LINE_HAPPY, FACE_LINE_LAUGH, FACE_LINE_LAUGH_INTENSITY},
+    {"sad", FACE_LINE_SAD, FACE_LINE_SAD, 101},
+    {"angry", FACE_LINE_ANGRY, FACE_LINE_FURIOUS, FACE_LINE_FURIOUS_INTENSITY},
+    {"sleepy", FACE_LINE_SLEEPY, FACE_LINE_SLEEPY, 101},
+    {"curious", FACE_LINE_CURIOUS, FACE_LINE_CURIOUS, 101},
+    {"surprised", FACE_LINE_SURPRISED, FACE_LINE_SURPRISED, 101},
+};
 
 static const mood_def_t k_moods[] = {
     {"neutral", FACE_EXPR_NEUTRAL}, {"happy", FACE_EXPR_HAPPY},
@@ -23,32 +41,56 @@ static const mood_def_t k_moods[] = {
 };
 #define MOOD_COUNT (sizeof(k_moods) / sizeof(k_moods[0]))
 
+static const char * const k_glyph_names[FACE_GLYPH_COUNT] = {
+    "none", "heart", "star", "spiral", "x", "closed",
+};
+static const char * const k_acc_names[FACE_ACC_COUNT] = {
+    "blush", "tear", "sweat", "zzz", "question", "exclaim", "music",
+};
+static const uint32_t k_acc_ms[FACE_ACC_COUNT] = {
+    FACE_BLUSH_MS, FACE_TEAR_MS, FACE_SWEAT_MS, FACE_ZZZ_MS,
+    FACE_QUESTION_MS, FACE_EXCLAIM_MS, FACE_MUSIC_MS,
+};
+
 typedef enum { ANIM_NONE, ANIM_LOOK_LEFT, ANIM_LOOK_RIGHT, ANIM_WAVE_LEFT, ANIM_WAVE_RIGHT } anim_t;
 
-typedef struct {
-    float from, to;
-    uint32_t t, ms;
-} tween_t;
+/* Per-eye spring channels, driven toward the mood expression. */
+enum { P_W, P_H, P_DY, P_ROUND, P_LID, P_SLANT_IN, P_SLANT_OUT, P_CHEEK, P_COUNT };
 
 typedef struct {
-    float cx, cy, w, h, radius;
-    float lid_top, slant_in, slant_out, cheek;
-} eye_geom_t;
+    float x, v;
+} spring_t;
 
 static struct {
     lv_obj_t * obj;
     bool idle;
     uint32_t rng;
+    face_style_t style;
 
-    face_expr_t from, to, cur;
-    uint32_t trans_t;
+    /* line style: shapes swap with the glyph pop; brow and mouth amounts are springs */
+    face_line_expr_t line_want, line_shown;
+    spring_t brow_tilt, brow_lift, mouth_scale;
+
+    face_expr_t target; /* mood expression scaled by intensity */
+    const char * mood;
+    spring_t eye[2][P_COUNT];
     float slow; /* >= 1, stretches idle timings (sleepy) */
+    bool sleep_closed;
+
+    /* gaze: springs chase a destination; saccades add a short anticipation */
+    spring_t gaze_x, gaze_y;
+    float dest_x, dest_y;       /* where the eyes are heading */
+    float aim_x, aim_y;         /* current spring target (anticipation, then dest) */
+    int32_t anticipate_ms;      /* > 0 while anticipating */
+    bool saccade_in_flight;
+
+    spring_t squash;
 
     bool blinking;
     uint32_t blink_t;
     int32_t blink_wait;
 
-    tween_t gx, gy;
+    float glance_x, glance_y; /* idle glance destination */
     bool glance_away;
     int32_t glance_wait;
 
@@ -56,21 +98,31 @@ static struct {
 
     anim_t anim;
     uint32_t anim_t;
+    int hop; /* wave hop index, to detect landings */
 
-    eye_geom_t eyes[2]; /* by screen position: 0 = screen left (robot's right eye), 1 = screen right */
+    face_glyph_t glyph_req;   /* asked for by face_show_glyph (NONE: no request) */
+    face_glyph_t glyph_want;  /* request, else the default (closed when deeply sleepy) */
+    face_glyph_t glyph_shown; /* lags glyph_want until the old glyph has shrunk away */
+    uint32_t glyph_left_ms;
+    bool glyph_timed;
+    spring_t glyph_scale;
+    float spiral_deg;
 
-    /* What is on screen, so only changed eye areas are redrawn (SPI time on the ESP32). */
+    bool acc_on[FACE_ACC_COUNT];
+    uint32_t acc_t[FACE_ACC_COUNT];
+
+    face_render_t render;
+    face_render_t drawn;
+    lv_area_t drawn_boxes[FACE_MAX_BOXES];
+    int drawn_count;
     bool drawn_valid;
-    eye_geom_t drawn[2];
-    lv_area_t drawn_box[2];
 } s;
 
-/* ---- small helpers ---- */
+/* ---- helpers ---- */
 
 static uint32_t rand_u32(void)
 {
-    /* xorshift32: deterministic, no libc state */
-    uint32_t x = s.rng;
+    uint32_t x = s.rng; /* xorshift32: deterministic, no libc state */
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
@@ -83,37 +135,15 @@ static int32_t rand_range(int32_t lo, int32_t hi)
     return lo + (int32_t)(rand_u32() % (uint32_t)(hi - lo + 1));
 }
 
-static float clamp01(float v)
+static float clampf(float v, float lo, float hi)
 {
-    return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static float ease_in_out(float t)
+/* Clamp a 0..1 shape amount; springs never land exactly on 0, so tiny values count as 0. */
+static float settled(float v)
 {
-    t = clamp01(t);
-    if(t < 0.5f) return 4.0f * t * t * t;
-    const float u = -2.0f * t + 2.0f;
-    return 1.0f - u * u * u / 2.0f;
-}
-
-static float lerp(float a, float b, float t)
-{
-    return a + (b - a) * t;
-}
-
-static void tween_start(tween_t * tw, float to, uint32_t ms)
-{
-    const float now = tw->ms ? lerp(tw->from, tw->to, ease_in_out((float)tw->t / tw->ms)) : tw->to;
-    tw->from = now;
-    tw->to = to;
-    tw->t = 0;
-    tw->ms = ms ? ms : 1;
-}
-
-static float tween_step(tween_t * tw, uint32_t dt)
-{
-    tw->t = tw->t + dt > tw->ms ? tw->ms : tw->t + dt;
-    return lerp(tw->from, tw->to, ease_in_out((float)tw->t / tw->ms));
+    return v < 0.01f ? 0.0f : (v > 1.0f ? 1.0f : v);
 }
 
 static uint32_t scaled(uint32_t ms)
@@ -121,15 +151,44 @@ static uint32_t scaled(uint32_t ms)
     return (uint32_t)(ms * s.slow);
 }
 
-/* Look/wave envelope: ramps 0 -> 1 -> 0 with eased edges. */
-static float anim_envelope(uint32_t t, uint32_t total)
+static void spring_step(spring_t * sp, float target, float k, float c, float dt)
 {
-    if(t < FACE_ANIM_RAMP_MS) return ease_in_out((float)t / FACE_ANIM_RAMP_MS);
-    if(t + FACE_ANIM_RAMP_MS > total) return ease_in_out((float)(total - t) / FACE_ANIM_RAMP_MS);
-    return 1.0f;
+    /* semi-implicit Euler: stable for the stiffness/step combinations in face_style.h */
+    sp->v += (k * (target - sp->x) - c * sp->v) * dt;
+    sp->x += sp->v * dt;
 }
 
-/* ---- idle life ---- */
+/* ---- gaze and saccades ---- */
+
+static void saccade_to(float x, float y)
+{
+    if(x == s.dest_x && y == s.dest_y) return;
+    s.aim_x = s.gaze_x.x - FACE_SACCADE_ANTICIPATE * (x - s.gaze_x.x);
+    s.aim_y = s.gaze_y.x - FACE_SACCADE_ANTICIPATE * (y - s.gaze_y.x);
+    s.dest_x = x;
+    s.dest_y = y;
+    s.anticipate_ms = FACE_SACCADE_ANTICIPATE_MS;
+    s.saccade_in_flight = true;
+}
+
+static void next_glance(void)
+{
+    if(!s.glance_away) {
+        s.glance_x = (float)rand_range(-FACE_GLANCE_MAX_X, FACE_GLANCE_MAX_X);
+        s.glance_y = (float)rand_range(-FACE_GLANCE_MAX_Y, FACE_GLANCE_MAX_Y);
+        s.glance_wait = (int32_t)scaled(
+            (uint32_t)rand_range(FACE_GLANCE_HOLD_MIN_MS, FACE_GLANCE_HOLD_MAX_MS));
+    }
+    else {
+        s.glance_x = 0.0f;
+        s.glance_y = 0.0f;
+        s.glance_wait = (int32_t)scaled(
+            (uint32_t)rand_range(FACE_GLANCE_INTERVAL_MIN_MS, FACE_GLANCE_INTERVAL_MAX_MS));
+    }
+    s.glance_away = !s.glance_away;
+}
+
+/* ---- blinks ---- */
 
 static void schedule_blink(void)
 {
@@ -143,8 +202,7 @@ static void start_blink(void)
     s.blink_t = 0;
 }
 
-/* 0 = open, 1 = closed */
-static float blink_amount(uint32_t dt)
+static float blink_amount(uint32_t dt) /* 0 = open, 1 = closed */
 {
     if(!s.blinking) return 0.0f;
     s.blink_t += dt;
@@ -160,152 +218,208 @@ static float blink_amount(uint32_t dt)
     return 0.0f;
 }
 
-static void next_glance(void)
+/* ---- springs for the eye shape ---- */
+
+static void eye_targets(int side, float out[P_COUNT])
 {
-    const uint32_t move = scaled(FACE_GLANCE_MOVE_MS);
-    if(!s.glance_away) {
-        tween_start(&s.gx, (float)rand_range(-FACE_GLANCE_MAX_X, FACE_GLANCE_MAX_X), move);
-        tween_start(&s.gy, (float)rand_range(-FACE_GLANCE_MAX_Y, FACE_GLANCE_MAX_Y), move);
-        s.glance_wait = (int32_t)scaled(
-            (uint32_t)rand_range(FACE_GLANCE_HOLD_MIN_MS, FACE_GLANCE_HOLD_MAX_MS));
+    const face_expr_t * e = &s.target;
+    const bool robot_left = side == 1; /* ADR 0014: the robot's left eye is on screen right */
+    const float grow = 1.0f + (robot_left ? e->grow_left : e->grow_right);
+    out[P_W] = FACE_EYE_W * (1.0f + e->grow_w) * grow;
+    out[P_H] = FACE_EYE_H * (1.0f + e->grow_h) * grow;
+    if(s.style == FACE_STYLE_LINE) {
+        const uint8_t kind = robot_left ? s.line_shown.eye_left : s.line_shown.eye_right;
+        out[P_W] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_W
+                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_W;
+        out[P_H] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_H
+                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_H;
+    }
+    out[P_DY] = e->dy + (robot_left ? -e->tilt : e->tilt);
+    out[P_ROUND] = e->round;
+    out[P_LID] = e->lid_top;
+    out[P_SLANT_IN] = e->slant_in;
+    out[P_SLANT_OUT] = e->slant_out;
+    out[P_CHEEK] = e->cheek;
+}
+
+static bool same_line_shapes(const face_line_expr_t * a, const face_line_expr_t * b)
+{
+    return a->eye_right == b->eye_right && a->eye_left == b->eye_left && a->mouth == b->mouth &&
+           a->brows == b->brows;
+}
+
+/* Shown content (glyph, and the line shapes in line style) differs from what's wanted. */
+static bool content_pending(void)
+{
+    if(s.glyph_want != s.glyph_shown) return true;
+    return s.style == FACE_STYLE_LINE && !same_line_shapes(&s.line_want, &s.line_shown);
+}
+
+static void step_springs(float dt)
+{
+    for(int side = 0; side < 2; ++side) {
+        float target[P_COUNT];
+        eye_targets(side, target);
+        for(int p = 0; p < P_COUNT; ++p) {
+            const bool lid = p >= P_LID;
+            spring_step(&s.eye[side][p], target[p], lid ? FACE_SPRING_LID_K : FACE_SPRING_SHAPE_K,
+                        lid ? FACE_SPRING_LID_C : FACE_SPRING_SHAPE_C, dt);
+        }
+    }
+    spring_step(&s.gaze_x, s.aim_x, FACE_SPRING_GAZE_K, FACE_SPRING_GAZE_C, dt);
+    spring_step(&s.gaze_y, s.aim_y, FACE_SPRING_GAZE_K, FACE_SPRING_GAZE_C, dt);
+    spring_step(&s.squash, 0.0f, FACE_SPRING_SQUASH_K, FACE_SPRING_SQUASH_C, dt);
+    spring_step(&s.glyph_scale, content_pending() ? 0.0f : 1.0f, FACE_SPRING_GLYPH_K,
+                FACE_SPRING_GLYPH_C, dt);
+    spring_step(&s.brow_tilt, s.line_want.brow_tilt, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.brow_lift, s.line_want.brow_lift, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.mouth_scale, s.line_want.mouth_scale, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C,
+                dt);
+}
+
+static void snap_springs(void)
+{
+    for(int side = 0; side < 2; ++side) {
+        float target[P_COUNT];
+        eye_targets(side, target);
+        for(int p = 0; p < P_COUNT; ++p) s.eye[side][p] = (spring_t){target[p], 0.0f};
+    }
+}
+
+/* ---- glyphs ---- */
+
+/* Runs every spring sub-step, so a shrink -> swap -> pop completes within one long tick. */
+static void update_glyph(uint32_t dt)
+{
+    if(s.glyph_timed) {
+        if(s.glyph_left_ms > dt) {
+            s.glyph_left_ms -= dt;
+        }
+        else {
+            s.glyph_timed = false;
+            s.glyph_req = FACE_GLYPH_NONE;
+        }
+    }
+    if(s.glyph_req != FACE_GLYPH_NONE) {
+        s.glyph_want = s.glyph_req;
     }
     else {
-        tween_start(&s.gx, 0.0f, move);
-        tween_start(&s.gy, 0.0f, move);
-        s.glance_wait = (int32_t)scaled(
-            (uint32_t)rand_range(FACE_GLANCE_INTERVAL_MIN_MS, FACE_GLANCE_INTERVAL_MAX_MS));
+        s.glyph_want = s.sleep_closed ? FACE_GLYPH_CLOSED : FACE_GLYPH_NONE;
     }
-    s.glance_away = !s.glance_away;
-}
-
-/* ---- geometry and drawing ---- */
-
-/* `side` is the screen position (0 = left). The robot's left eye is on the screen's right. */
-static void compute_eye(int side, float gx, float gy, float breath, float blink)
-{
-    const face_expr_t * e = &s.cur;
-    const bool robot_left = side == 1;
-    const float dir = side ? 1.0f : -1.0f; /* screen x direction from the center */
-    const float grow = 1.0f + (robot_left ? e->grow_left : e->grow_right);
-    eye_geom_t * g = &s.eyes[side];
-
-    g->w = FACE_EYE_W * (1.0f + e->grow_w) * grow;
-    g->h = FACE_EYE_H * (1.0f + e->grow_h) * grow * (1.0f + FACE_BREATH_SCALE * breath);
-    g->cx = FACE_SCREEN_W / 2.0f + dir * FACE_EYE_SPACING / 2.0f + gx;
-    g->cy = FACE_SCREEN_H / 2.0f + FACE_EYE_Y + e->dy + (robot_left ? -e->tilt : e->tilt) + gy +
-            FACE_BREATH_DY * breath;
-
-    const float max_r = (g->w < g->h ? g->w : g->h) / 2.0f;
-    g->radius = lerp(FACE_EYE_RADIUS < max_r ? FACE_EYE_RADIUS : max_r, max_r, clamp01(e->round));
-
-    const float blink_lid = blink * FACE_BLINK_CLOSED;
-    g->lid_top = clamp01(e->lid_top > blink_lid ? e->lid_top : blink_lid);
-    g->slant_in = clamp01(e->slant_in) * (1.0f - g->lid_top); /* lids flatten as they close */
-    g->slant_out = clamp01(e->slant_out) * (1.0f - g->lid_top);
-    g->cheek = clamp01(e->cheek);
-}
-
-static void draw_black_rect(lv_layer_t * layer, float x1, float y1, float x2, float y2,
-                            int32_t radius)
-{
-    lv_draw_rect_dsc_t d;
-    lv_draw_rect_dsc_init(&d);
-    d.bg_color = lv_color_hex(FACE_COLOR_BG);
-    d.bg_opa = LV_OPA_COVER;
-    d.radius = radius;
-    const lv_area_t a = {(int32_t)lroundf(x1), (int32_t)lroundf(y1), (int32_t)lroundf(x2),
-                         (int32_t)lroundf(y2)};
-    lv_draw_rect(layer, &d, &a);
-}
-
-static void draw_black_triangle(lv_layer_t * layer, float ax, float ay, float bx, float by,
-                                float cx, float cy)
-{
-    lv_draw_triangle_dsc_t d;
-    lv_draw_triangle_dsc_init(&d);
-    d.color = lv_color_hex(FACE_COLOR_BG);
-    d.opa = LV_OPA_COVER;
-    d.p[0].x = (int32_t)lroundf(ax);
-    d.p[0].y = (int32_t)lroundf(ay);
-    d.p[1].x = (int32_t)lroundf(bx);
-    d.p[1].y = (int32_t)lroundf(by);
-    d.p[2].x = (int32_t)lroundf(cx);
-    d.p[2].y = (int32_t)lroundf(cy);
-    lv_draw_triangle(layer, &d);
-}
-
-static void draw_eye(lv_layer_t * layer, int32_t ox, int32_t oy, const eye_geom_t * g, int side)
-{
-    const float x1 = ox + g->cx - g->w / 2.0f;
-    const float x2 = ox + g->cx + g->w / 2.0f;
-    const float y1 = oy + g->cy - g->h / 2.0f;
-    const float y2 = oy + g->cy + g->h / 2.0f;
-
-    lv_draw_rect_dsc_t eye;
-    lv_draw_rect_dsc_init(&eye);
-    eye.bg_color = lv_color_hex(FACE_COLOR_EYE);
-    eye.bg_opa = LV_OPA_COVER;
-    eye.radius = (int32_t)lroundf(g->radius);
-    const lv_area_t a = {(int32_t)lroundf(x1), (int32_t)lroundf(y1), (int32_t)lroundf(x2),
-                         (int32_t)lroundf(y2)};
-    lv_draw_rect(layer, &eye, &a);
-
-    /* Lids are black shapes drawn over the eye, 2 px wider so no edge peeks out. */
-    const float lx1 = x1 - 2.0f, lx2 = x2 + 2.0f;
-    const float lid_y = g->lid_top > 0.0f ? y1 + g->h * g->lid_top : y1 - 1.0f;
-    if(g->lid_top > 0.0f) draw_black_rect(layer, lx1, y1 - 2.0f, lx2, lid_y, 0);
-
-    const float inner_x = side ? lx1 : lx2; /* inner corner faces the other eye */
-    const float outer_x = side ? lx2 : lx1;
-    if(g->slant_in > 0.0f) {
-        draw_black_triangle(layer, inner_x, lid_y, outer_x, lid_y, inner_x,
-                            lid_y + g->h * g->slant_in);
-    }
-    if(g->slant_out > 0.0f) {
-        draw_black_triangle(layer, inner_x, lid_y, outer_x, lid_y, outer_x,
-                            lid_y + g->h * g->slant_out);
-    }
-
-    if(g->cheek > 0.0f) {
-        const float cx = ox + g->cx;
-        const float top = y2 - g->h * g->cheek;
-        draw_black_rect(layer, cx - g->w * 0.75f, top, cx + g->w * 0.75f, top + g->h * 1.5f,
-                        LV_RADIUS_CIRCLE);
+    /* The old glyph shrinks away; once small, swap and pop the new one in. */
+    if(content_pending() && s.glyph_scale.x <= FACE_GLYPH_SWAP_BELOW) {
+        s.glyph_shown = s.glyph_want;
+        s.line_shown = s.line_want;
     }
 }
 
-static void eye_box(const eye_geom_t * g, const lv_area_t * obj, lv_area_t * out)
+/* ---- frame geometry ---- */
+
+/* The mouth (and brows) a glyph shows with, in line style. */
+static uint8_t glyph_mouth(face_glyph_t glyph, uint8_t mood_mouth)
 {
-    out->x1 = obj->x1 + (int32_t)floorf(g->cx - g->w / 2.0f) - DIRTY_MARGIN;
-    out->x2 = obj->x1 + (int32_t)ceilf(g->cx + g->w / 2.0f) + DIRTY_MARGIN;
-    out->y1 = obj->y1 + (int32_t)floorf(g->cy - g->h / 2.0f) - DIRTY_MARGIN;
-    out->y2 = obj->y1 + (int32_t)ceilf(g->cy + g->h / 2.0f) + DIRTY_MARGIN;
+    switch(glyph) {
+        case FACE_GLYPH_HEART: return FACE_MOUTH_SMILE;
+        case FACE_GLYPH_STAR: return FACE_MOUTH_GRIN;
+        case FACE_GLYPH_SPIRAL: return FACE_MOUTH_WAVY;
+        case FACE_GLYPH_X: return FACE_MOUTH_FLAT;
+        case FACE_GLYPH_CLOSED: return FACE_MOUTH_DOT;
+        default: return mood_mouth;
+    }
 }
 
-/* Invalidate the old and new box of each eye whose geometry changed. */
+static void build_line_render(line_render_t * l, float hop_dy)
+{
+    const face_line_expr_t * x = &s.line_shown;
+    l->eye[0] = x->eye_right; /* screen left = the robot's right (ADR 0014) */
+    l->eye[1] = x->eye_left;
+    const bool glyph = s.glyph_shown != FACE_GLYPH_NONE;
+    l->mouth = glyph_mouth(s.glyph_shown, x->mouth);
+    l->brow_on[0] = !glyph && x->brows == FACE_BROWS_BOTH;
+    l->brow_on[1] = !glyph && (x->brows == FACE_BROWS_BOTH || x->brows == FACE_BROWS_LEFT);
+    l->brow_tilt = s.brow_tilt.x;
+    l->brow_lift = s.brow_lift.x;
+    l->mouth_scale = fmaxf(0.0f, s.mouth_scale.x);
+    const float dy = (s.eye[0][P_DY].x + s.eye[1][P_DY].x) / 2.0f;
+    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_LINE_MOUTH_GAZE;
+    l->mouth_y = FACE_SCREEN_H / 2.0f + FACE_LINE_MOUTH_Y + dy * 0.5f +
+                 s.gaze_y.x * FACE_LINE_MOUTH_GAZE + hop_dy;
+}
+
+static void build_render(float blink, float breath, float hop_dy)
+{
+    face_render_t * r = &s.render;
+    const bool line = s.style == FACE_STYLE_LINE;
+    r->style = s.style;
+    if(line) {
+        build_line_render(&r->line, hop_dy);
+    }
+    else {
+        memset(&r->line, 0, sizeof(r->line));
+    }
+    const float squash = clampf(s.squash.x, -FACE_SQUASH_MAX, FACE_SQUASH_MAX);
+    for(int side = 0; side < 2; ++side) {
+        const spring_t * e = s.eye[side];
+        eye_geom_t * g = &r->eyes[side];
+        const float dir = side ? 1.0f : -1.0f;
+        const float spacing = line ? FACE_LINE_EYE_SPACING : FACE_EYE_SPACING;
+        g->w = fmaxf(4.0f, e[P_W].x * (1.0f + squash) * (1.0f + FACE_BLINK_SQUASH * blink));
+        g->h = fmaxf(4.0f, e[P_H].x * (1.0f - squash) * (1.0f + FACE_BREATH_SCALE * breath));
+        if(line) g->h = fmaxf(4.0f, g->h * (1.0f - FACE_LINE_BLINK_FLATTEN * blink));
+        g->cx = FACE_SCREEN_W / 2.0f + dir * spacing / 2.0f + s.gaze_x.x;
+        g->cy = FACE_SCREEN_H / 2.0f + (line ? FACE_LINE_EYE_Y : FACE_EYE_Y) + e[P_DY].x +
+                s.gaze_y.x + hop_dy + FACE_BREATH_DY * breath;
+        const float max_r = (g->w < g->h ? g->w : g->h) / 2.0f;
+        const float base_r = FACE_EYE_RADIUS < max_r ? FACE_EYE_RADIUS : max_r;
+        g->radius = base_r + (max_r - base_r) * clampf(e[P_ROUND].x, 0.0f, 1.0f);
+        const float blink_lid = line ? 0.0f : blink * FACE_BLINK_CLOSED; /* line: flattens */
+        const float lid = line ? 0.0f : settled(e[P_LID].x);
+        g->lid_top = lid > blink_lid ? lid : blink_lid;
+        g->slant_in = line ? 0.0f : settled(e[P_SLANT_IN].x) * (1.0f - g->lid_top);
+        g->slant_out = line ? 0.0f : settled(e[P_SLANT_OUT].x) * (1.0f - g->lid_top);
+        g->cheek = line ? 0.0f : settled(e[P_CHEEK].x);
+    }
+    /* Pop: the scale overshoots past 1 and squashes on the way. */
+    const float scale = fmaxf(0.0f, s.glyph_scale.x);
+    const float pop = FACE_GLYPH_POP_SQUASH * (1.0f - scale);
+    r->glyph = s.glyph_shown;
+    r->glyph_w = scale * (1.0f + pop);
+    r->glyph_h = scale * (1.0f - pop);
+    r->spiral_deg = s.glyph_shown == FACE_GLYPH_SPIRAL ? s.spiral_deg : 0.0f;
+    for(int i = 0; i < FACE_ACC_COUNT; ++i) {
+        r->acc[i] = s.acc_on[i] ? (float)s.acc_t[i] / k_acc_ms[i] : -1.0f;
+    }
+}
+
 static void invalidate_changed(void)
 {
     if(s.obj == NULL) return;
+    if(s.drawn_valid && memcmp(&s.render, &s.drawn, sizeof(s.render)) == 0) return;
     lv_area_t c;
     lv_obj_get_coords(s.obj, &c);
-    for(int side = 0; side < 2; ++side) {
-        if(s.drawn_valid && memcmp(&s.eyes[side], &s.drawn[side], sizeof(eye_geom_t)) == 0) continue;
-        lv_area_t box;
-        eye_box(&s.eyes[side], &c, &box);
-        if(s.drawn_valid) lv_obj_invalidate_area(s.obj, &s.drawn_box[side]);
-        lv_obj_invalidate_area(s.obj, &box);
-        s.drawn[side] = s.eyes[side];
-        s.drawn_box[side] = box;
+    lv_area_t boxes[FACE_MAX_BOXES];
+    const int n = face_render_boxes(&s.render, boxes, FACE_MAX_BOXES);
+    for(int i = 0; i < n; ++i) {
+        boxes[i].x1 += c.x1 - DIRTY_MARGIN;
+        boxes[i].y1 += c.y1 - DIRTY_MARGIN;
+        boxes[i].x2 += c.x1 + DIRTY_MARGIN;
+        boxes[i].y2 += c.y1 + DIRTY_MARGIN;
     }
+    if(s.drawn_valid) {
+        for(int i = 0; i < s.drawn_count; ++i) lv_obj_invalidate_area(s.obj, &s.drawn_boxes[i]);
+    }
+    for(int i = 0; i < n; ++i) lv_obj_invalidate_area(s.obj, &boxes[i]);
+    memcpy(s.drawn_boxes, boxes, sizeof(boxes[0]) * (size_t)n);
+    s.drawn_count = n;
+    s.drawn = s.render;
     s.drawn_valid = true;
 }
 
 static void draw_cb(lv_event_t * e)
 {
-    lv_layer_t * layer = lv_event_get_layer(e);
     lv_area_t c;
     lv_obj_get_coords(s.obj, &c);
-    for(int side = 0; side < 2; ++side) draw_eye(layer, c.x1, c.y1, &s.eyes[side], side);
+    face_draw_frame(lv_event_get_layer(e), c.x1, c.y1, &s.render);
 }
 
 /* ---- public API ---- */
@@ -315,9 +429,16 @@ lv_obj_t * face_init(lv_obj_t * parent)
     memset(&s, 0, sizeof(s));
     s.idle = true;
     s.rng = 0x5eed1234u;
+    s.style = FACE_DEFAULT_STYLE;
+    const face_line_expr_t calm = FACE_LINE_NEUTRAL;
+    s.line_want = s.line_shown = calm;
+    s.mouth_scale.x = calm.mouth_scale;
     s.slow = 1.0f;
+    s.mood = "neutral";
     s.glance_wait = FACE_GLANCE_INTERVAL_MIN_MS;
+    s.glyph_scale.x = 1.0f;
     schedule_blink();
+    snap_springs();
 
     s.obj = lv_obj_create(parent);
     lv_obj_remove_style_all(s.obj);
@@ -344,35 +465,118 @@ bool face_set_mood(const char * mood, uint8_t intensity)
 
     const float k = (intensity > 100 ? 100 : intensity) / 100.0f;
     const float * src = (const float *)&def->expr;
-    float * to = (float *)&s.to;
-    s.from = s.cur;
+    float * to = (float *)&s.target;
     for(size_t i = 0; i < EXPR_FIELDS; ++i) to[i] = src[i] * k;
-    s.trans_t = 0;
 
+    for(size_t i = 0; i < sizeof(k_line_moods) / sizeof(k_line_moods[0]); ++i) {
+        const line_mood_t * lm = &k_line_moods[i];
+        if(strcmp(lm->name, def->name) != 0) continue;
+        if(intensity < FACE_LINE_MIN_INTENSITY) {
+            const face_line_expr_t calm = FACE_LINE_NEUTRAL;
+            s.line_want = calm;
+        }
+        else {
+            s.line_want = intensity >= lm->strong_at ? lm->strong : lm->normal;
+            s.line_want.brow_tilt *= k;
+            s.line_want.brow_lift *= k;
+            s.line_want.mouth_scale *= 0.6f + 0.4f * k;
+        }
+    }
+
+    const bool surprised = strcmp(def->name, "surprised") == 0;
+    if(surprised && strcmp(s.mood, "surprised") != 0) s.squash.v += FACE_STRETCH_SURPRISE_KICK;
+    s.mood = def->name;
     const bool sleepy = strcmp(def->name, "sleepy") == 0;
     s.slow = 1.0f + (FACE_SLEEPY_SLOWDOWN - 1.0f) * (sleepy ? k : 0.0f);
+    s.sleep_closed = sleepy && intensity >= FACE_SLEEP_CLOSED_INTENSITY;
     return true;
+}
+
+void face_set_style(face_style_t style)
+{
+    if(style != FACE_STYLE_FILLED && style != FACE_STYLE_LINE) return;
+    s.style = style;
+    s.line_shown = s.line_want;
+    snap_springs(); /* each style has its own eye sizes */
+    s.drawn_valid = false;
+    if(s.obj) lv_obj_invalidate(s.obj);
+}
+
+face_style_t face_get_style(void)
+{
+    return s.style;
+}
+
+void face_show_glyph(face_glyph_t glyph, uint32_t ms)
+{
+    if(glyph >= FACE_GLYPH_COUNT) return;
+    s.glyph_req = glyph;
+    s.glyph_timed = ms > 0 && glyph != FACE_GLYPH_NONE;
+    s.glyph_left_ms = ms;
+}
+
+void face_show_accessory(face_accessory_t accessory)
+{
+    if(accessory >= FACE_ACC_COUNT) return;
+    s.acc_on[accessory] = true;
+    s.acc_t[accessory] = 0;
+    if(accessory == FACE_ACC_EXCLAIM) s.squash.v += FACE_STRETCH_EXCLAIM_KICK;
+}
+
+const char * face_glyph_name(face_glyph_t glyph)
+{
+    return glyph < FACE_GLYPH_COUNT ? k_glyph_names[glyph] : "?";
+}
+
+const char * face_accessory_name(face_accessory_t accessory)
+{
+    return accessory < FACE_ACC_COUNT ? k_acc_names[accessory] : "?";
 }
 
 bool face_play_anim(const char * name)
 {
-    if(strcmp(name, "blink") == 0) {
-        start_blink();
-        return true;
-    }
     static const struct {
         const char * name;
         anim_t anim;
-    } k_anims[] = {
+    } k_moves[] = {
         {"look_left", ANIM_LOOK_LEFT},
         {"look_right", ANIM_LOOK_RIGHT},
         {"wave_left", ANIM_WAVE_LEFT},
         {"wave_right", ANIM_WAVE_RIGHT},
     };
-    for(size_t i = 0; i < sizeof(k_anims) / sizeof(k_anims[0]); ++i) {
-        if(strcmp(name, k_anims[i].name) == 0) {
-            s.anim = k_anims[i].anim;
+    static const struct {
+        const char * name;
+        int glyph; /* face_glyph_t, or -1 */
+        uint32_t glyph_ms;
+        int acc; /* face_accessory_t, or -1 */
+    } k_fx[] = {
+        {"hearts", FACE_GLYPH_HEART, FACE_HEARTS_MS, FACE_ACC_BLUSH},
+        {"stars", FACE_GLYPH_STAR, FACE_STARS_MS, -1},
+        {"dizzy", FACE_GLYPH_SPIRAL, FACE_DIZZY_MS, -1},
+        {"zzz", -1, 0, FACE_ACC_ZZZ},
+        {"tear", -1, 0, FACE_ACC_TEAR},
+        {"blush", -1, 0, FACE_ACC_BLUSH},
+        {"sweat", -1, 0, FACE_ACC_SWEAT},
+        {"question", -1, 0, FACE_ACC_QUESTION},
+        {"exclaim", -1, 0, FACE_ACC_EXCLAIM},
+        {"music", -1, 0, FACE_ACC_MUSIC},
+    };
+    if(strcmp(name, "blink") == 0) {
+        start_blink();
+        return true;
+    }
+    for(size_t i = 0; i < sizeof(k_moves) / sizeof(k_moves[0]); ++i) {
+        if(strcmp(name, k_moves[i].name) == 0) {
+            s.anim = k_moves[i].anim;
             s.anim_t = 0;
+            s.hop = 0;
+            return true;
+        }
+    }
+    for(size_t i = 0; i < sizeof(k_fx) / sizeof(k_fx[0]); ++i) {
+        if(strcmp(name, k_fx[i].name) == 0) {
+            if(k_fx[i].glyph >= 0) face_show_glyph((face_glyph_t)k_fx[i].glyph, k_fx[i].glyph_ms);
+            if(k_fx[i].acc >= 0) face_show_accessory((face_accessory_t)k_fx[i].acc);
             return true;
         }
     }
@@ -383,8 +587,7 @@ void face_set_idle(bool enabled)
 {
     s.idle = enabled;
     if(!enabled) {
-        tween_start(&s.gx, 0.0f, 1);
-        tween_start(&s.gy, 0.0f, 1);
+        s.glance_x = s.glance_y = 0.0f;
         s.glance_away = false;
         s.breath_phase = 0.0f;
     }
@@ -392,17 +595,6 @@ void face_set_idle(bool enabled)
 
 void face_tick(uint32_t dt)
 {
-    /* Mood transition */
-    if(s.trans_t < FACE_MOOD_TRANSITION_MS) {
-        s.trans_t = s.trans_t + dt > FACE_MOOD_TRANSITION_MS ? FACE_MOOD_TRANSITION_MS
-                                                               : s.trans_t + dt;
-        const float p = ease_in_out((float)s.trans_t / FACE_MOOD_TRANSITION_MS);
-        const float * from = (const float *)&s.from;
-        const float * to = (const float *)&s.to;
-        float * cur = (float *)&s.cur;
-        for(size_t i = 0; i < EXPR_FIELDS; ++i) cur[i] = lerp(from[i], to[i], p);
-    }
-
     /* Idle life */
     if(s.idle) {
         if(!s.blinking) {
@@ -416,10 +608,9 @@ void face_tick(uint32_t dt)
     }
     const float blink = blink_amount(dt);
     const float breath = s.idle ? sinf(s.breath_phase) : 0.0f;
-    float gx = tween_step(&s.gx, dt);
-    float gy = tween_step(&s.gy, dt);
 
-    /* Animations override the gaze */
+    /* Where the eyes should look: an anim overrides the idle glance (robot frame, ADR 0014). */
+    float want_x = s.glance_x, want_y = s.glance_y, hop_dy = 0.0f;
     if(s.anim != ANIM_NONE) {
         const bool look = s.anim == ANIM_LOOK_LEFT || s.anim == ANIM_LOOK_RIGHT;
         const uint32_t total = look ? FACE_LOOK_MS : FACE_WAVE_MS;
@@ -428,20 +619,49 @@ void face_tick(uint32_t dt)
             s.anim = ANIM_NONE;
         }
         else {
-            /* Robot's left is the screen's right (+x), ADR 0014. */
             const bool left = s.anim == ANIM_LOOK_LEFT || s.anim == ANIM_WAVE_LEFT;
-            const float env = anim_envelope(s.anim_t, total);
-            const float target = (left ? 1.0f : -1.0f) * (look ? FACE_LOOK_X : FACE_WAVE_X);
-            gx = lerp(gx, target, env);
-            gy = lerp(gy, 0.0f, env);
+            want_x = (left ? 1.0f : -1.0f) * (look ? FACE_LOOK_X : FACE_WAVE_X);
+            want_y = 0.0f;
             if(!look) {
-                const float p = (float)s.anim_t / total;
-                gy -= FACE_WAVE_BOUNCE_PX * fabsf(sinf(PI_F * FACE_WAVE_BOUNCES * p));
+                const float p = (float)s.anim_t / total * FACE_WAVE_BOUNCES;
+                hop_dy = -FACE_WAVE_BOUNCE_PX * fabsf(sinf(PI_F * p));
+                if((int)p > s.hop) { /* a hop just landed */
+                    s.hop = (int)p;
+                    s.squash.v += FACE_SQUASH_LAND_KICK;
+                }
             }
         }
     }
+    saccade_to(want_x, want_y);
 
-    compute_eye(0, gx, gy, breath, blink);
-    compute_eye(1, gx, gy, breath, blink);
+    /* Springs, in fixed sub-steps */
+    for(uint32_t left = dt; left > 0;) {
+        const uint32_t step = left < FACE_SPRING_STEP_MS ? left : FACE_SPRING_STEP_MS;
+        if(s.anticipate_ms > 0) {
+            s.anticipate_ms -= (int32_t)step;
+            if(s.anticipate_ms <= 0) {
+                s.aim_x = s.dest_x;
+                s.aim_y = s.dest_y;
+            }
+        }
+        update_glyph(step);
+        step_springs(step / 1000.0f);
+        left -= step;
+    }
+    if(s.saccade_in_flight && s.anticipate_ms <= 0 &&
+       fabsf(s.gaze_x.x - s.dest_x) < FACE_SACCADE_LANDED_PX &&
+       fabsf(s.gaze_y.x - s.dest_y) < FACE_SACCADE_LANDED_PX) {
+        s.saccade_in_flight = false;
+        s.squash.v += FACE_SQUASH_SACCADE_KICK;
+    }
+
+    s.spiral_deg = fmodf(s.spiral_deg + FACE_SPIRAL_DEG_PER_S * dt / 1000.0f, 360.0f);
+    for(int i = 0; i < FACE_ACC_COUNT; ++i) {
+        if(!s.acc_on[i]) continue;
+        s.acc_t[i] += dt;
+        if(s.acc_t[i] >= k_acc_ms[i]) s.acc_on[i] = false;
+    }
+
+    build_render(blink, breath, hop_dy);
     invalidate_changed();
 }

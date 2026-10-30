@@ -32,6 +32,7 @@ set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 add_executable(face_sim
   main.cpp
   ${REPO}/firmware/lib/face/src/face.c
+  ${REPO}/firmware/lib/face/src/face_draw.c
   ${REPO}/firmware/src/protocol.cpp)
 target_include_directories(face_sim PRIVATE ${REPO}/firmware/lib/face/src ${REPO}/firmware/src)
 target_compile_options(face_sim PRIVATE -Wall -Wextra)

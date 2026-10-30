@@ -15,6 +15,7 @@ from petbot_brain.mood.personality import Personality, event_key
 from petbot_brain.protocol import MOODS, Anim, Event, Message, Mood
 
 RATE_WINDOW_S = 1.0
+EPS = 1e-6  # simulated time is a float sum of dts; compare durations with this slack
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,11 @@ class MoodState:
     reflex_mood: str | None = None  # shown instead of `mood` until reflex_until
     reflex_intensity: int = 0
     reflex_until: float = -math.inf
+    reflex_fired: Mapping[str, float] = field(default_factory=dict)  # event key -> last fired
+    pending_anims: tuple[tuple[float, str], ...] = ()  # (due time, anim) from reflex sequences
+    last_touch_t: float = -math.inf
+    # trigger name -> (condition true since, last fired, fired this episode)
+    triggers: Mapping[str, tuple[float | None, float, bool]] = field(default_factory=dict)
 
     def shown(self) -> tuple[str, int]:
         """The mood and intensity on the face: an active reflex, else the model's mood."""
@@ -131,17 +137,24 @@ def _decay(s: MoodState, p: Personality, dt: float) -> MoodState:
 
 def _apply_event(
     s: MoodState, event: Event, p: Personality, rng: random.Random
-) -> tuple[MoodState, list[Message], list[Message]]:
-    """Returns (state, reflex anims, reaction anims)."""
+) -> tuple[MoodState, list[Message]]:
+    """Returns (state, reaction anims). Reflex anims are scheduled in pending_anims."""
     key = event_key(event.source, event.detail)
     anims: list[Message] = []
-    reflex_anims: list[Message] = []
 
     # Reflex: a fixed reaction shown over the mood for a moment (checked before waking).
     reflex = p.reflexes.get(key)
-    if reflex is not None and (s.asleep or not reflex.only_when_asleep):
-        if reflex.anim is not None:
-            reflex_anims.append(Anim(reflex.anim))
+    if (
+        reflex is not None
+        and (s.asleep or not reflex.only_when_asleep)
+        and s.t - s.reflex_fired.get(key, -math.inf) >= reflex.cooldown_s - EPS
+    ):
+        s = replace(
+            s,
+            reflex_fired={**s.reflex_fired, key: s.t},
+            pending_anims=s.pending_anims
+            + tuple((s.t + after_s, anim) for anim, after_s in reflex.anims),
+        )
         if reflex.mood is not None:
             s = replace(
                 s,
@@ -181,11 +194,12 @@ def _apply_event(
         boredom=_clamp(s.boredom + impulse.get("boredom", 0.0) * scale, 0.0, 1.0),
         habituation={**s.habituation, key: level + 1.0},
         last_event_t=s.t,
+        last_touch_t=s.t if event.source == "touch" else s.last_touch_t,
         next_idle_anim_t=s.t
         + p.idle_quiet_after_event_s
         + rng.uniform(p.idle_interval_min_s, p.idle_interval_max_s),
     )
-    return s, reflex_anims, anims
+    return s, anims
 
 
 def _choose_mood(s: MoodState, p: Personality) -> MoodState:
@@ -212,6 +226,52 @@ def _choose_mood(s: MoodState, p: Personality) -> MoodState:
     return replace(s, intensity=intensity)
 
 
+def _due_anims(s: MoodState) -> tuple[MoodState, list[Message]]:
+    """Reflex sequence anims whose time has come, in order."""
+    due = sorted((t, a) for t, a in s.pending_anims if t <= s.t + 1e-9)
+    if not due:
+        return s, []
+    later = tuple((t, a) for t, a in s.pending_anims if t > s.t + 1e-9)
+    return replace(s, pending_anims=later), [Anim(a) for _, a in due]
+
+
+def _triggers(s: MoodState, p: Personality) -> tuple[MoodState, list[Message]]:
+    """State-condition anims (hearts while petted, zzz while asleep, ...)."""
+    shown_mood, shown_intensity = s.shown()
+    signals = {
+        "valence": s.valence,
+        "arousal": s.arousal,
+        "energy": s.energy,
+        "social": s.social,
+        "boredom": s.boredom,
+    }
+    states = dict(s.triggers)
+    anims: list[Message] = []
+    for name, trig in p.triggers.items():
+        since, last_fired, fired_episode = states.get(name, (None, -math.inf, False))
+        holds = (
+            (trig.asleep is None or s.asleep == trig.asleep)
+            and (trig.mood is None or shown_mood == trig.mood)
+            and shown_intensity >= (trig.min_intensity if trig.mood is not None else 0)
+            and all(signals[sig] > threshold for sig, threshold in trig.above.items())
+            and (trig.touched_within_s is None or s.t - s.last_touch_t <= trig.touched_within_s)
+        )
+        if not holds:
+            states[name] = (None, last_fired, False)
+            continue
+        since = s.t if since is None else since
+        ready = s.t - since >= trig.hold_s - EPS
+        if trig.cooldown_s > 0:
+            ready = ready and s.t - last_fired >= trig.cooldown_s - EPS
+        else:
+            ready = ready and not fired_episode
+        if ready:
+            anims.append(Anim(trig.anim))
+            last_fired, fired_episode = s.t, True
+        states[name] = (since, last_fired, fired_episode)
+    return replace(s, triggers=states), anims
+
+
 def _idle_anim(s: MoodState, p: Personality, rng: random.Random) -> tuple[MoodState, list[Message]]:
     if s.asleep or s.t < s.next_idle_anim_t:
         return s, []
@@ -231,12 +291,11 @@ def step(
     """Advance the model by `dt` seconds, apply `events`, and return the messages to send."""
     s = _decay(state, p, max(0.0, dt))
 
-    reflex_anims: list[Message] = []
     wanted_anims: list[Message] = []
     for event in events:
-        s, reflexes, anims = _apply_event(s, event, p, rng)
-        reflex_anims += reflexes
+        s, anims = _apply_event(s, event, p, rng)
         wanted_anims += anims
+    s, reflex_anims = _due_anims(s)
     if not events:
         s, anims = _idle_anim(s, p, rng)
         wanted_anims += anims
@@ -248,6 +307,8 @@ def step(
     if not s.asleep and quiet and (s.energy < p.asleep_below or dozing):
         s = replace(s, asleep=True)
     s = _choose_mood(s, p)
+    s, trigger_anims = _triggers(s, p)
+    wanted_anims = trigger_anims + wanted_anims
 
     # Outputs, all rate-limited: reflex anims, then MOOD (only when the shown mood changed
     # enough), then reaction/idle anims. A MOOD that doesn't fit is retried next step

@@ -21,6 +21,10 @@ const uint8_t kMaxIntensity = 100;  // hundredths: 100 is "1.00" on the wire
 #define PETBOT_TOUCH_DETAILS(X) X(head) X(left) X(right) X(back)
 #define PETBOT_IMU_DETAILS(X) X(pickup) X(shake) X(tilt) X(fall)
 #define PETBOT_EVENT_SOURCES(X) X(touch, PETBOT_TOUCH_DETAILS) X(imu, PETBOT_IMU_DETAILS)
+// Known animations (v1). The wire accepts any [a-z0-9_]+ name; this is the supported set.
+#define PETBOT_ANIMS(X)                                                                        \
+    X(blink) X(look_left) X(look_right) X(wave_left) X(wave_right) X(hearts) X(stars) X(dizzy) \
+    X(zzz) X(tear) X(blush) X(sweat) X(question) X(exclaim) X(music)
 
 #define PETBOT_ENUM_ITEM(name) name,
 #define PETBOT_SOURCE_ENUM_ITEM(name, details) name,
@@ -32,6 +36,9 @@ enum class ImuDetail : uint8_t { PETBOT_IMU_DETAILS(PETBOT_ENUM_ITEM) kCount };
 #undef PETBOT_SOURCE_ENUM_ITEM
 
 const char* moodName(MoodId mood);  // nullptr if out of range
+size_t animCount();
+const char* animName(size_t index);  // nullptr if out of range
+bool isKnownAnim(const char* name);
 const char* sourceName(EventSource source);
 size_t detailCount(EventSource source);
 const char* detailName(EventSource source, uint8_t detail);

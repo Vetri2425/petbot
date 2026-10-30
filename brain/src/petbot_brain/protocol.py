@@ -26,6 +26,26 @@ EVENTS: Final[dict[str, tuple[str, ...]]] = {
     "imu": ("pickup", "shake", "tilt", "fall"),
 }
 
+# Known animations (v1). The wire accepts any [a-z0-9_]+ name (a receiver logs and skips
+# names it doesn't support); the brain only sends names from this list.
+ANIMS: Final[tuple[str, ...]] = (
+    "blink",
+    "look_left",
+    "look_right",
+    "wave_left",
+    "wave_right",
+    "hearts",
+    "stars",
+    "dizzy",
+    "zzz",
+    "tear",
+    "blush",
+    "sweat",
+    "question",
+    "exclaim",
+    "music",
+)
+
 _NAME_RE: Final = re.compile(r"[a-z0-9_]+")
 MAX_INTENSITY: Final = 100  # hundredths: 100 is "1.00" on the wire
 _INTENSITY_RE: Final = re.compile(r"([0-9]+)(?:\.([0-9]{1,2}))?")
