@@ -4,6 +4,16 @@ Simulators for sim-first development (ADR 0010).
 - `fake_esp32.py`: plays the ESP32 over a serial port. It prints received MOOD/ANIM lines and
   sends events from keys or a `--script` file. Uses `petbot_brain.protocol` for parsing.
 - `run_link.sh`: creates a socat virtual serial pair `/tmp/petbot-esp <-> /tmp/petbot-brain`.
+- `mood_replay.py`: runs an event timeline through the mood engine faster than real time and
+  writes a CSV (time, valence, arousal, needs, mood, intensity, outputs). Example timelines are in
+  `mood_scenarios/`: `petting`, `ignored` (one hour), `shaken`.
+
+  ```sh
+  python sim/mood_replay.py sim/mood_scenarios/petting.script --out petting.csv
+  ```
+
+  Options: `--seed`, `--personality <toml>`, `--tail <s>` (time after the last event, default 30),
+  `--sample <s>` (seconds between CSV rows, default 1). It also prints the MOOD timeline.
 - `face_sim/`: LVGL + SDL2 simulator of the face (`firmware/lib/face`). It can also act as the
   ESP32 on the link, see [face_sim/README.md](face_sim/README.md).
 - Planned: arm64 Docker container capped at 2GB for the voice pipeline.
