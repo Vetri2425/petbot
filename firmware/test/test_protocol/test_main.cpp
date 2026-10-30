@@ -331,6 +331,23 @@ void test_names_match_protocol_md() {
         row += " |\n";
         TEST_ASSERT_TRUE_MESSAGE(g_protocolMd.find(row) != std::string::npos, row.c_str());
     }
+    std::string anims = "Animations (v1): ";
+    for (size_t i = 0; i < animCount(); ++i) {
+        if (i) anims += ", ";
+        anims += std::string("`") + animName(i) + "`";
+    }
+    TEST_ASSERT_TRUE_MESSAGE(g_protocolMd.find(anims + "\n") != std::string::npos, anims.c_str());
+}
+
+void test_known_anims() {
+    TEST_ASSERT_EQUAL(15, animCount());
+    for (size_t i = 0; i < animCount(); ++i) {
+        Message msg;
+        TEST_ASSERT_TRUE(makeAnim(animName(i), msg));
+        TEST_ASSERT_TRUE(isKnownAnim(animName(i)));
+    }
+    TEST_ASSERT_FALSE(isKnownAnim("x_1"));  // valid on the wire, but not a known anim
+    TEST_ASSERT_NULL(animName(animCount()));
 }
 
 int main() {
@@ -355,5 +372,6 @@ int main() {
     RUN_TEST(test_line_assembler_discards_overlong_line);
     RUN_TEST(test_line_assembler_limits);
     RUN_TEST(test_names_match_protocol_md);
+    RUN_TEST(test_known_anims);
     return UNITY_END();
 }

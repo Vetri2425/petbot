@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from petbot_brain.protocol import EVENTS, MOODS, Anim, Event, ProtocolError
+from petbot_brain.protocol import ANIMS, EVENTS, MOODS, Event, ProtocolError
 
 DEFAULT_PATH: Final = Path(__file__).resolve().parents[3] / "config" / "personality.toml"
 SIGNALS: Final = ("valence", "arousal", "energy", "social", "boredom")
@@ -144,13 +144,17 @@ class _Table:
             raise PersonalityError(f"unknown key(s) in [{self._path}]: {', '.join(self._data)}")
 
 
+def _check_anim(name: object, where: str) -> str:
+    """Every anim the brain may send must be in the protocol's known list."""
+    if not isinstance(name, str) or name not in ANIMS:
+        raise PersonalityError(f"{where}: {name!r} is not a known animation ({', '.join(ANIMS)})")
+    return name
+
+
 def _anims(table: _Table, key: str) -> tuple[str, ...]:
     names = table.strings(key)
     for name in names:
-        try:
-            Anim(name)
-        except ProtocolError as e:
-            raise PersonalityError(f"{table.where(key)}: {e}") from e
+        _check_anim(name, table.where(key))
     return names
 
 
@@ -168,13 +172,7 @@ def _reflex(t: _Table) -> Reflex:
             raise PersonalityError(f"{t.where('mood')}: unknown mood {mood!r}")
         intensity = t.integer("intensity", 0, 100)
         hold_s = t.num("hold_s", 0.001)
-    anim = None
-    if t.has("anim"):
-        anim = t.raw("anim")
-        try:
-            Anim(anim)
-        except ProtocolError as e:
-            raise PersonalityError(f"{t.where('anim')}: {e}") from e
+    anim = _check_anim(t.raw("anim"), t.where("anim")) if t.has("anim") else None
     only_when_asleep = t.boolean("only_when_asleep") if t.has("only_when_asleep") else False
     t.done()
     if mood is None and anim is None:

@@ -15,6 +15,7 @@ namespace {
     {#name, k_##name##_details, sizeof(k_##name##_details) / sizeof(k_##name##_details[0])},
 
 const char* const kMoodNames[] = {PETBOT_MOODS(PETBOT_NAME_STR)};
+const char* const kAnimNames[] = {PETBOT_ANIMS(PETBOT_NAME_STR)};
 PETBOT_EVENT_SOURCES(PETBOT_DETAIL_ARRAY)
 
 struct SourceDef {
@@ -30,6 +31,7 @@ const SourceDef kSources[] = {PETBOT_EVENT_SOURCES(PETBOT_SOURCE_DEF)};
 
 const size_t kMoodCount = sizeof(kMoodNames) / sizeof(kMoodNames[0]);
 const size_t kSourceCount = sizeof(kSources) / sizeof(kSources[0]);
+const size_t kAnimCount = sizeof(kAnimNames) / sizeof(kAnimNames[0]);
 static_assert(kMoodCount == static_cast<size_t>(MoodId::kCount), "mood table");
 static_assert(kSourceCount == static_cast<size_t>(EventSource::kCount), "source table");
 
@@ -126,6 +128,17 @@ private:
 const char* moodName(MoodId mood) {
     const size_t i = static_cast<size_t>(mood);
     return i < kMoodCount ? kMoodNames[i] : nullptr;
+}
+
+size_t animCount() { return kAnimCount; }
+
+const char* animName(size_t index) { return index < kAnimCount ? kAnimNames[index] : nullptr; }
+
+bool isKnownAnim(const char* name) {
+    for (size_t i = 0; i < kAnimCount; ++i) {
+        if (strcmp(name, kAnimNames[i]) == 0) return true;
+    }
+    return false;
 }
 
 const char* sourceName(EventSource source) {

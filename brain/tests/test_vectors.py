@@ -8,7 +8,7 @@ import pytest
 from conftest import Pty
 
 from petbot_brain.link import SerialLink
-from petbot_brain.protocol import EVENTS, MOODS, ProtocolError, encode, parse_line
+from petbot_brain.protocol import ANIMS, EVENTS, MOODS, ProtocolError, encode, parse_line
 
 VECTORS_PATH = Path(__file__).resolve().parents[2] / "protocol" / "test_vectors.txt"
 _ESCAPES = {"\\": b"\\", "n": b"\n", "r": b"\r", "t": b"\t"}
@@ -83,6 +83,8 @@ def test_vectors_cover_every_name() -> None:
     assert {m.name for m in valid if hasattr(m, "intensity")} == set(MOODS)
     events = {(m.source, m.detail) for m in valid if hasattr(m, "source")}
     assert events == {(s, d) for s, details in EVENTS.items() for d in details}
+    anims = {m.name for m in valid if type(m).__name__ == "Anim"}
+    assert set(ANIMS) <= anims
 
 
 @pytest.mark.parametrize("vector", [v for v in VECTORS if v.valid], ids=str)
