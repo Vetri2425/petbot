@@ -17,7 +17,8 @@ start = 0.5
 baseline = 0.1
 half_life_s = 600.0
 lonely_below = 0.4        # below this the valence baseline drops (lonely)...
-lonely_valence = -1.0     # ...by this much at social = 0 (ignored for ~50 min -> sad)
+lonely_valence = -0.25    # ...by this much at social = 0. Keep baseline + this above the sad
+                          # threshold: being ignored should end in a nap, not sadness.
 comfort_when_lonely = 1.2 # extra valence from a social touch, x loneliness (0..1)
 
 [boredom]          # rises toward idle_target when nothing happens; events lower it

@@ -384,15 +384,25 @@ def test_scenario_petting_never_sad(replay, seed: int) -> None:
     assert names[-1] == "neutral"
 
 
-@pytest.mark.parametrize("seed", range(3))
-def test_scenario_ignored(replay, seed: int) -> None:
-    sent = scenario_moods(replay, "ignored", seed)
-    before_pat = [m.name for t, m in sent if t < 3601]
-    assert before_pat.index("curious") < before_pat.index("sad")  # bored, then lonely
-    assert before_pat[-1] == "sad"
-    after_pat = [m.name for t, m in sent if t >= 3601]
-    assert after_pat[0] == "happy"  # a touch comforts a lonely pet
-    assert "sleepy" in after_pat  # but it's tired after an hour
+@pytest.mark.parametrize("seed", range(5))
+def test_scenario_ignored_naps_and_wakes_happy(replay, seed: int) -> None:
+    steps = replay.load_script(SCENARIOS / "ignored.script")
+    sent: list[tuple[float, Message]] = []
+    for state, outputs in replay.replay(steps, P, seed, tail_s=60):
+        sent += [(state.t, m) for m in outputs]
+    shown = [m for _, m in sent if isinstance(m, Mood)]
+    assert "sad" not in {m.name for m in shown}  # ignored is not a reason to be sad
+    before = [m.name for t, m in sent if isinstance(m, Mood) and t < 3601]
+    assert before.index("happy") < before.index("curious") < before.index("sleepy")
+    assert [m for t, m in sent if isinstance(m, Mood) and t < 3601][-1] == Mood("sleepy", 100)
+    wake = [m for t, m in sent if 3600.5 < t < 3602]
+    assert wake[0] == Anim("blink")  # reflex, then...
+    assert wake[1].name == "happy" and wake[1].intensity >= 60  # ...wakes up happy
+
+
+def test_loneliness_alone_cannot_reach_sad() -> None:
+    lowest = P.valence.baseline + P.lonely_valence  # valence baseline at social = 0
+    assert lowest > P.mood_ranges["sad"]["valence"][0]
 
 
 def test_scenario_shaken(replay) -> None:
