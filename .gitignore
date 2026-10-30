@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Models (never committed)
+models/
+*.gguf
+*.onnx
+
+# Binaries (allowed only under releases/)
+*.bin
+!releases/**/*.bin
+
+# Secrets
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
