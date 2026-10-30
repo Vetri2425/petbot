@@ -8,12 +8,34 @@ Built and tested by CI, not locally in Termux.
 | File | Purpose |
 |------|---------|
 | `src/protocol.h/.cpp` | Line protocol parser/encoder and line assembler. No Arduino, no heap |
-| `src/link.h/.cpp` | UART1 receive task; logs MOOD/ANIM to USB serial, `sendEvent()` |
-| `src/config.h` | Pins and baud rates (link pins TBD until PCB/wiring) |
-| `src/main.cpp` | Boot banner, link start, debug keys on USB serial |
+| `src/link.h/.cpp` | UART1 receive task; logs MOOD/ANIM and queues them for the face, `sendEvent()` |
+| `src/display.h/.cpp` | Face task: LVGL + ST7789 over SPI at ~30 fps, fed by a queue |
+| `src/serial_log.h/.cpp` | Mutex-guarded USB serial logging |
+| `src/config.h` | Pins, baud rates, display options (pins TBD until wiring) |
+| `src/main.cpp` | Boot banner, start link and face, debug keys on USB serial |
+| `lib/face/` | The face (LVGL only); the same code runs in `sim/face_sim` |
+| `include/lv_conf*.h` | LVGL config; `lv_conf_common.h` is shared with the sim |
 | `test/test_protocol/` | Unity tests, run on the host; include `protocol/test_vectors.txt` |
 
 Build: `pio run` (env `esp32-s3-devkitc-1`). Host tests: `pio test -e native`.
+
+## Display wiring (TBD until wiring is final)
+
+2.0" ST7789 240x320 SPI module, shown as 320x240 landscape. Pins are in `src/config.h`.
+
+| Display pin | ESP32-S3 | Notes |
+|-------------|----------|-------|
+| VCC | 3V3 | |
+| GND | GND | |
+| SCL / SCK | GPIO12 | SPI clock (40 MHz) |
+| SDA / MOSI | GPIO11 | SPI data |
+| CS | GPIO10 | |
+| DC / RS | GPIO9 | data/command |
+| RES / RST | GPIO8 | |
+| BLK / BL | GPIO7 | backlight, HIGH = on |
+
+With no display connected the firmware still boots and the link works (SPI is write-only).
+`kDisplayInvertColors` and `kDisplayRotate270` in `config.h` may need flipping for your panel.
 
 ## Try it with a USB-UART adapter
 
