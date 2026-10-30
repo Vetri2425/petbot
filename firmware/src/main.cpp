@@ -1,8 +1,11 @@
 // PetBot firmware: boot banner, UART link to the brain, debug keys on USB serial.
 #include <Arduino.h>
 
+#include <stdio.h>
+
 #include "config.h"
 #include "link.h"
+#include "serial_log.h"
 
 namespace {
 
@@ -19,16 +22,14 @@ const DebugKey kDebugKeys[] = {
 };
 
 void printHelp() {
-    Serial.print("[debug] keys:");
+    char help[192] = "";
+    size_t n = 0;
     for (const DebugKey& k : kDebugKeys) {
-        Serial.print(' ');
-        Serial.print(k.key);
-        Serial.print('=');
-        Serial.print(k.source);
-        Serial.print(' ');
-        Serial.print(k.detail);
+        const int w = snprintf(help + n, sizeof(help) - n, " %c=%s %s", k.key, k.source, k.detail);
+        if (w < 0 || static_cast<size_t>(w) >= sizeof(help) - n) break;
+        n += static_cast<size_t>(w);
     }
-    Serial.println("  ?=help");
+    petbot::logLine("[debug] keys:%s  ?=help", help);
 }
 
 void handleDebugKey(char c) {
@@ -49,8 +50,9 @@ void handleDebugKey(char c) {
 void setup() {
     Serial.begin(petbot::config::kUsbBaud);
     delay(500);
-    Serial.println();
-    Serial.println("PetBot firmware v0.1.0 - boot OK");
+    petbot::logBegin();
+    petbot::logLine("%s", "");
+    petbot::logLine("PetBot firmware v0.1.0 - boot OK");
     petbot::link::begin();
     printHelp();
 }
