@@ -30,13 +30,13 @@ def brain(clock: FakeClock) -> ReactionBrain:
 @pytest.mark.parametrize(
     ("event", "expected"),
     [
-        (Event("touch", "head"), [Mood("happy", 0.80)]),
+        (Event("touch", "head"), [Mood("happy", 80)]),
         (Event("touch", "left"), [Anim("wave_left")]),
         (Event("touch", "right"), [Anim("wave_right")]),
-        (Event("touch", "back"), [Mood("curious", 0.60)]),
-        (Event("imu", "pickup"), [Mood("surprised", 0.90)]),
-        (Event("imu", "shake"), [Mood("angry", 0.50)]),
-        (Event("imu", "fall"), [Mood("sad", 0.70)]),
+        (Event("touch", "back"), [Mood("curious", 60)]),
+        (Event("imu", "pickup"), [Mood("surprised", 90)]),
+        (Event("imu", "shake"), [Mood("angry", 50)]),
+        (Event("imu", "fall"), [Mood("sad", 70)]),
         (Event("imu", "tilt"), []),
     ],
 )
@@ -49,7 +49,7 @@ def test_sleepy_after_30s_without_events(brain: ReactionBrain, clock: FakeClock)
     assert brain.tick() == []
     clock.now += 0.1
     assert brain.tick() == [SLEEPY]
-    assert SLEEPY == Mood("sleepy", 0.40)
+    assert SLEEPY == Mood("sleepy", 40)
     clock.now += 100
     assert brain.tick() == []  # only once
 
@@ -66,9 +66,9 @@ def test_event_resets_sleep_timer(brain: ReactionBrain, clock: FakeClock) -> Non
 def test_event_wakes_to_neutral_before_reacting(brain: ReactionBrain, clock: FakeClock) -> None:
     clock.now += SLEEP_AFTER_S
     assert brain.tick() == [SLEEPY]
-    assert brain.on_event(Event("touch", "head")) == [WAKE, Mood("happy", 0.80)]
+    assert brain.on_event(Event("touch", "head")) == [WAKE, Mood("happy", 80)]
     assert WAKE.name == "neutral"
-    assert brain.on_event(Event("touch", "head")) == [Mood("happy", 0.80)]
+    assert brain.on_event(Event("touch", "head")) == [Mood("happy", 80)]
 
 
 def test_event_without_reaction_still_wakes(brain: ReactionBrain, clock: FakeClock) -> None:

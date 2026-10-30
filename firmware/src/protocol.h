@@ -13,6 +13,7 @@ namespace protocol {
 
 const size_t kMaxLineBytes = 128;  // including the '\n'
 const size_t kMaxAnimNameLen = kMaxLineBytes - 6;  // "ANIM " + name + "\n"
+const uint8_t kMaxIntensity = 100;  // hundredths: 100 is "1.00" on the wire
 
 // Allowed names. This is the only place they are defined on the C++ side;
 // enums and string tables are generated from these lists.
@@ -45,13 +46,13 @@ enum class MessageType : uint8_t { Mood, Anim, Event };
 struct Message {
     MessageType type;
     MoodId mood;        // Mood
-    float intensity;    // Mood, 0.0-1.0
+    uint8_t intensity;  // Mood, hundredths 0-100 ("0.80" is 80)
     char anim[kMaxAnimNameLen + 1];  // Anim, NUL-terminated [a-z0-9_]+
     EventSource source;  // Event
     uint8_t detail;      // Event, index into the source's detail list
 };
 
-Message makeMood(MoodId mood, float intensity);
+Message makeMood(MoodId mood, uint8_t intensity);
 Message makeEvent(EventSource source, uint8_t detail);
 bool makeAnim(const char* name, Message& out);  // false if the name is invalid
 
@@ -81,7 +82,7 @@ bool parse(const char* line, size_t len, Message& out, ParseError& err);
 
 // Write `msg` as an LF-terminated line plus a NUL into `buf`.
 // Returns the line length including the LF (not the NUL), or 0 if the message
-// is invalid or `cap` is too small. Intensity is rounded to 2 decimals.
+// is invalid or `cap` is too small.
 size_t encode(const Message& msg, char* buf, size_t cap);
 
 // Assembles bytes into lines in a fixed buffer. A line longer than

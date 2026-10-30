@@ -7,7 +7,6 @@
 # <line> starts after the first space and ends at the first "  #" (two spaces, hash).
 # Escapes in <line>: \\ \n \r \t \xHH. Leading/trailing spaces are written as \x20.
 # A <line> without a trailing \n is parsed as if terminated by \n (the \n counts toward 128 bytes).
-# Avoid intensities that sit exactly on a .xx5 rounding tie: encode only promises 2 decimals.
 
 # --- MOOD: every mood name
 VALID MOOD neutral 0.50  # => MOOD neutral 0.50
@@ -23,11 +22,13 @@ VALID MOOD happy 0  # => MOOD happy 0.00
 VALID MOOD happy 1  # => MOOD happy 1.00
 VALID MOOD happy 0.0  # => MOOD happy 0.00
 VALID MOOD happy 1.0  # => MOOD happy 1.00
-VALID MOOD happy 1.000  # => MOOD happy 1.00
+VALID MOOD happy 1.00  # => MOOD happy 1.00
 VALID MOOD happy 0.8  # => MOOD happy 0.80
-VALID MOOD happy 0.123  # => MOOD happy 0.12
-VALID MOOD happy 0.999  # => MOOD happy 1.00
+VALID MOOD happy 0.81  # => MOOD happy 0.81
+VALID MOOD happy 0.99  # => MOOD happy 0.99
 VALID MOOD happy 0.01  # => MOOD happy 0.01
+VALID MOOD happy 0.05  # => MOOD happy 0.05
+VALID MOOD happy 0.5  # => MOOD happy 0.50
 VALID MOOD happy 00.5  # => MOOD happy 0.50
 VALID MOOD happy 01  # => MOOD happy 1.00
 
@@ -96,9 +97,18 @@ INVALID MOOD happy 0,5  # comma is not a decimal point
 INVALID MOOD happy 0.5.5  # two points
 INVALID MOOD happy 0x1  # not decimal
 
+# --- more than 2 decimals
+INVALID MOOD happy 0.815  # 3 decimals
+INVALID MOOD happy 0.805  # 3 decimals
+INVALID MOOD happy 0.123  # 3 decimals
+INVALID MOOD happy 0.999  # 3 decimals
+INVALID MOOD happy 0.001  # 3 decimals
+INVALID MOOD happy 1.000  # 3 decimals
+INVALID MOOD happy 0.800  # 3 decimals, even with trailing zeros
+
 # --- out-of-range intensity
 INVALID MOOD happy 1.01  # > 1.0
-INVALID MOOD happy 1.0000001  # > 1.0
+INVALID MOOD happy 1.0000001  # more than 2 decimals
 INVALID MOOD happy 2  # > 1.0
 INVALID MOOD happy 10  # > 1.0
 INVALID MOOD happy 0001.5  # > 1.0

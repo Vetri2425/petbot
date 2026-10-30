@@ -17,18 +17,18 @@ from petbot_brain.protocol import Anim, Event, Message, Mood, encode
 log = logging.getLogger(__name__)
 
 SLEEP_AFTER_S: Final = 30.0
-SLEEPY: Final = Mood("sleepy", 0.40)
-WAKE: Final = Mood("neutral", 0.50)
+SLEEPY: Final = Mood("sleepy", 40)
+WAKE: Final = Mood("neutral", 50)
 
 # (source, detail) -> command. Events not listed (e.g. imu tilt) are only logged.
 REACTIONS: Final[Mapping[tuple[str, str], Message]] = {
-    ("touch", "head"): Mood("happy", 0.80),
+    ("touch", "head"): Mood("happy", 80),
     ("touch", "left"): Anim("wave_left"),
     ("touch", "right"): Anim("wave_right"),
-    ("touch", "back"): Mood("curious", 0.60),
-    ("imu", "pickup"): Mood("surprised", 0.90),
-    ("imu", "shake"): Mood("angry", 0.50),
-    ("imu", "fall"): Mood("sad", 0.70),
+    ("touch", "back"): Mood("curious", 60),
+    ("imu", "pickup"): Mood("surprised", 90),
+    ("imu", "shake"): Mood("angry", 50),
+    ("imu", "fall"): Mood("sad", 70),
 }
 
 

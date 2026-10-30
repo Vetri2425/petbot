@@ -5,7 +5,6 @@ The allowed names live here and only here; PROTOCOL.md is kept in sync by a test
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from typing import Final, TypeAlias
@@ -28,7 +27,8 @@ EVENTS: Final[dict[str, tuple[str, ...]]] = {
 }
 
 _NAME_RE: Final = re.compile(r"[a-z0-9_]+")
-_INTENSITY_RE: Final = re.compile(r"[0-9]+(\.[0-9]+)?")
+MAX_INTENSITY: Final = 100  # hundredths: 100 is "1.00" on the wire
+_INTENSITY_RE: Final = re.compile(r"([0-9]+)(?:\.([0-9]{1,2}))?")
 
 
 class ProtocolError(ValueError):
@@ -37,21 +37,20 @@ class ProtocolError(ValueError):
 
 @dataclass(frozen=True)
 class Mood:
-    """Linux -> ESP32: set the mood, intensity 0.0-1.0."""
+    """Linux -> ESP32: set the mood. Intensity is in hundredths, 0-100 ("0.80" is 80)."""
 
     name: str
-    intensity: float
+    intensity: int
 
     def __post_init__(self) -> None:
         if self.name not in MOODS:
             raise ProtocolError(f"unknown mood {self.name!r}")
         if (
             isinstance(self.intensity, bool)
-            or not isinstance(self.intensity, (int, float))
-            or not math.isfinite(self.intensity)
-            or not 0.0 <= self.intensity <= 1.0
+            or not isinstance(self.intensity, int)
+            or not 0 <= self.intensity <= MAX_INTENSITY
         ):
-            raise ProtocolError(f"intensity must be 0.0-1.0, got {self.intensity!r}")
+            raise ProtocolError(f"intensity must be an int 0-100, got {self.intensity!r}")
 
 
 @dataclass(frozen=True)
@@ -119,9 +118,14 @@ def parse_line(line: str | bytes) -> Message:
     if verb == "MOOD":
         _expect_args(verb, args, 2)
         name, intensity = args
-        if not _INTENSITY_RE.fullmatch(intensity):
+        match = _INTENSITY_RE.fullmatch(intensity)
+        if match is None:
             raise ProtocolError(f"invalid intensity {intensity!r}")
-        return Mood(name, float(intensity))
+        whole, frac = match.groups()
+        hundredths = int(whole) * 100 + int((frac or "0").ljust(2, "0"))
+        if hundredths > MAX_INTENSITY:
+            raise ProtocolError(f"intensity must be 0.0-1.0, got {intensity!r}")
+        return Mood(name, hundredths)
     if verb == "ANIM":
         _expect_args(verb, args, 1)
         return Anim(args[0])
@@ -134,7 +138,7 @@ def parse_line(line: str | bytes) -> Message:
 def encode(msg: Message) -> bytes:
     """Encode a message as one LF-terminated ASCII line."""
     if isinstance(msg, Mood):
-        text = f"MOOD {msg.name} {msg.intensity:.2f}"
+        text = f"MOOD {msg.name} {msg.intensity // 100}.{msg.intensity % 100:02d}"
     elif isinstance(msg, Anim):
         text = f"ANIM {msg.name}"
     elif isinstance(msg, Event):

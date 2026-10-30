@@ -26,7 +26,7 @@ EOL      = LF / CR LF             ; senders emit LF; receivers also accept CR LF
 
 - No leading, trailing or repeated spaces. No other control characters.
 - Names are lowercase `[a-z0-9_]+`.
-- Intensity is a decimal number `[0-9]+(.[0-9]+)?` in the range 0.0-1.0.
+- Intensity is a decimal number `[0-9]+(.[0-9]{1,2})?` (at most 2 decimals) in the range 0.0-1.0.
   Senders format it with 2 decimals (`0.80`).
 
 ## Messages
@@ -64,8 +64,9 @@ Mechanism (bootloader entry, transfer format): TBD, decided when the `deploy/` u
 ## Error handling
 
 A line is invalid if it has an unknown command, a wrong number of arguments, an unknown
-name, an intensity that is malformed or outside 0.0-1.0, is longer than 128 bytes, contains
-non-ASCII bytes or control characters, or breaks the single-space rule.
+name, an intensity that is malformed, has more than 2 decimals or is outside 0.0-1.0, is
+longer than 128 bytes, contains non-ASCII bytes or control characters, or breaks the
+single-space rule.
 
 On an invalid line the receiver:
 - logs a warning and skips the line;

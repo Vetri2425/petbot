@@ -2,7 +2,6 @@
 // Runs protocol/test_vectors.txt, the same file the Python tests use.
 #include <unity.h>
 
-#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -195,12 +194,13 @@ void test_vectors_through_line_assembler() {
 void test_round_trip_moods() {
     for (size_t m = 0; m < static_cast<size_t>(MoodId::kCount); ++m) {
         for (int h = 0; h <= 100; ++h) {
-            const Message in = makeMood(static_cast<MoodId>(m), h / 100.0f);
+            const Message in = makeMood(static_cast<MoodId>(m), static_cast<uint8_t>(h));
             const std::string line = encodeToString(in);
             Message out;
             TEST_ASSERT_TRUE_MESSAGE(parse(line.data(), line.size(), out), line.c_str());
             TEST_ASSERT_EQUAL(static_cast<int>(MessageType::Mood), static_cast<int>(out.type));
             TEST_ASSERT_EQUAL(m, static_cast<size_t>(out.mood));
+            TEST_ASSERT_EQUAL(h, out.intensity);
             TEST_ASSERT_EQUAL_STRING(line.c_str(), encodeToString(out).c_str());
         }
     }
@@ -258,10 +258,9 @@ void test_find_event() {
 
 void test_encode_rejects_invalid_messages() {
     char buf[kMaxLineBytes + 1];
-    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::happy, 1.5f), buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::happy, -0.1f), buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::happy, NAN), buf, sizeof(buf)));
-    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::kCount, 0.5f), buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::happy, 101), buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::happy, 255), buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, encode(makeMood(MoodId::kCount, 50), buf, sizeof(buf)));
     TEST_ASSERT_EQUAL(0, encode(makeEvent(EventSource::imu, 4), buf, sizeof(buf)));
     TEST_ASSERT_EQUAL(0, encode(makeEvent(EventSource::kCount, 0), buf, sizeof(buf)));
     Message anim;
@@ -271,7 +270,7 @@ void test_encode_rejects_invalid_messages() {
 }
 
 void test_encode_buffer_too_small() {
-    const Message msg = makeMood(MoodId::happy, 0.8f);  // "MOOD happy 0.80\n" = 16 bytes
+    const Message msg = makeMood(MoodId::happy, 80);  // "MOOD happy 0.80\n" = 16 bytes
     char buf[32];
     TEST_ASSERT_EQUAL(16, encode(msg, buf, 17));  // 16 + NUL fits
     TEST_ASSERT_EQUAL_STRING("MOOD happy 0.80\n", buf);

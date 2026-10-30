@@ -51,28 +51,28 @@ bool fail(ParseError& err, ParseError e) {
     return false;
 }
 
-// [0-9]+(\.[0-9]+)? in the range 0.0-1.0.
-bool parseIntensity(const Token& t, float& out, ParseError& err) {
+// [0-9]+(\.[0-9]{1,2})? in the range 0.0-1.0, as hundredths 0-100.
+bool parseIntensity(const Token& t, uint8_t& out, ParseError& err) {
     size_t i = 0;
-    double value = 0.0;
+    unsigned whole = 0;
     while (i < t.n && isDigit(t.p[i])) {
-        if (value <= 10.0) value = value * 10.0 + (t.p[i] - '0');  // > 1 is rejected anyway
+        if (whole <= 10) whole = whole * 10 + (t.p[i] - '0');  // > 1 is rejected anyway
         ++i;
     }
     if (i == 0) return fail(err, ParseError::BadIntensity);
+    unsigned frac = 0;
     if (i < t.n) {
         if (t.p[i] != '.') return fail(err, ParseError::BadIntensity);
         const size_t fracStart = ++i;
-        double scale = 0.1;
-        while (i < t.n && isDigit(t.p[i])) {
-            value += (t.p[i] - '0') * scale;
-            scale *= 0.1;
-            ++i;
-        }
-        if (i == fracStart || i != t.n) return fail(err, ParseError::BadIntensity);
+        while (i < t.n && isDigit(t.p[i])) ++i;
+        const size_t digits = i - fracStart;
+        if (digits < 1 || digits > 2 || i != t.n) return fail(err, ParseError::BadIntensity);
+        frac = (t.p[fracStart] - '0') * 10;
+        if (digits == 2) frac += t.p[fracStart + 1] - '0';
     }
-    if (value > 1.0) return fail(err, ParseError::IntensityRange);
-    out = static_cast<float>(value);
+    const unsigned hundredths = whole * 100 + frac;
+    if (hundredths > kMaxIntensity) return fail(err, ParseError::IntensityRange);
+    out = static_cast<uint8_t>(hundredths);
     return true;
 }
 
@@ -165,7 +165,7 @@ bool findEvent(const char* source, const char* detail, EventSource& outSource,
     return false;
 }
 
-Message makeMood(MoodId mood, float intensity) {
+Message makeMood(MoodId mood, uint8_t intensity) {
     Message m = {};
     m.type = MessageType::Mood;
     m.mood = mood;
@@ -248,7 +248,7 @@ bool parse(const char* line, size_t len, Message& out, ParseError& err) {
 
     if (tokenIs(tok[0], "MOOD")) {
         if (argc != 2) return fail(err, ParseError::ArgCount);
-        float intensity;
+        uint8_t intensity;
         if (!parseIntensity(tok[2], intensity, err)) return false;
         size_t mood;
         if (!findToken(tok[1], kMoodNames, kMoodCount, mood)) {
@@ -290,9 +290,8 @@ size_t encode(const Message& msg, char* buf, size_t cap) {
     switch (msg.type) {
         case MessageType::Mood: {
             const char* name = moodName(msg.mood);
-            // Written so that NaN fails too.
-            if (name == nullptr || !(msg.intensity >= 0.0f && msg.intensity <= 1.0f)) return 0;
-            const unsigned hundredths = static_cast<unsigned>(msg.intensity * 100.0f + 0.5f);
+            if (name == nullptr || msg.intensity > kMaxIntensity) return 0;
+            const unsigned hundredths = msg.intensity;
             w.str("MOOD ");
             w.str(name);
             w.ch(' ');
