@@ -59,7 +59,8 @@ def test_personality_loads() -> None:
     assert (pickup.mood, pickup.intensity, pickup.hold_s) == ("surprised", 90, 1.5)
     head = P.reflexes["touch head"]
     assert head.anims == (("blink", 0.0),) and head.only_when_asleep
-    assert P.reflexes["imu fall"].anims == (("exclaim", 0.0), ("tear", 0.9))
+    assert P.reflexes["imu fall"].anims == (("scared", 0.0), ("exclaim", 0.0), ("tear", 0.9))
+    assert P.reflexes["imu pickup"].anims == (("scared", 0.0),)
     assert set(P.triggers) == {"hearts", "zzz", "question"}
     assert set(P.mood_ranges) == {"happy", "sad", "angry", "sleepy", "curious", "surprised"}
     assert len(P.impulses) == sum(len(d) for d in EVENTS.values())
@@ -337,7 +338,8 @@ def test_reflex_timing_follows_the_injected_clock() -> None:
     engine = MoodEngine(P, seed=0)
     engine.update(1000.0)
     engine.update(1001.0, [HEAD])
-    assert engine.update(1010.0, [PICKUP])[0] == Mood("surprised", 90)
+    out = engine.update(1010.0, [PICKUP])
+    assert out[0] == Anim("scared") and Mood("surprised", 90) in out
     engine.update(1010.0 + hold - 0.05)
     assert engine.state.shown() == ("surprised", 90)
     out = engine.update(1010.0 + hold + 0.05)
@@ -378,14 +380,14 @@ def test_every_configured_anim_is_known() -> None:
     used |= {a for r in P.reflexes.values() for a, _ in r.anims}
     used |= {t.anim for t in P.triggers.values()}
     assert used <= set(ANIMS)
-    assert {"hearts", "zzz", "question", "dizzy", "exclaim", "tear"} <= used
+    assert {"hearts", "zzz", "question", "dizzy", "exclaim", "tear", "scared"} <= used
 
 
 def test_fall_sends_exclaim_then_tear_on_the_engine_clock() -> None:
     engine = MoodEngine(P, seed=0)
     engine.update(100.0)
     out = engine.update(101.0, [Event("imu", "fall")])
-    assert out[0] == Anim("exclaim") and Mood("surprised", 100) in out
+    assert out[:2] == [Anim("scared"), Anim("exclaim")] and Mood("surprised", 100) in out
     assert Anim("tear") not in engine.update(101.85)
     assert engine.update(101.95)[0] == Anim("tear")  # 0.9 s after the fall
 

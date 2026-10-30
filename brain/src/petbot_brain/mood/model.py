@@ -228,7 +228,8 @@ def _choose_mood(s: MoodState, p: Personality) -> MoodState:
 
 def _due_anims(s: MoodState) -> tuple[MoodState, list[Message]]:
     """Reflex sequence anims whose time has come, in order."""
-    due = sorted((t, a) for t, a in s.pending_anims if t <= s.t + 1e-9)
+    # Sort by time only: stable, so anims due together keep their configured order.
+    due = sorted(((t, a) for t, a in s.pending_anims if t <= s.t + 1e-9), key=lambda d: d[0])
     if not due:
         return s, []
     later = tuple((t, a) for t, a in s.pending_anims if t > s.t + 1e-9)

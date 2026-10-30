@@ -111,12 +111,17 @@ right = ["wave_right", "look_right"]
 mood = "surprised"
 intensity = 90
 hold_s = 1.5
+anims = [{ anim = "scared", after_s = 0.0 }]  # the face flinches: > < and gritted teeth
 
 [reflexes.imu.fall]
 mood = "surprised"
 intensity = 100
 hold_s = 1.0
-anims = [{ anim = "exclaim", after_s = 0.0 }, { anim = "tear", after_s = 0.9 }]
+anims = [
+  { anim = "scared", after_s = 0.0 },
+  { anim = "exclaim", after_s = 0.0 },
+  { anim = "tear", after_s = 0.9 },
+]
 
 [reflexes.imu.shake]
 anims = [{ anim = "dizzy", after_s = 0.0 }]  # the face spins its eyes for ~2 s
