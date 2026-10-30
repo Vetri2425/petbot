@@ -13,11 +13,11 @@ jobs:
       run:
         working-directory: firmware
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/pip
@@ -27,7 +27,7 @@ jobs:
         run: pip install platformio
       - name: Build
         run: pio run -e esp32-s3-devkitc-1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-esp32-s3-devkitc-1
           path: firmware/.pio/build/esp32-s3-devkitc-1/firmware.bin
@@ -39,8 +39,8 @@ jobs:
       run:
         working-directory: brain
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install

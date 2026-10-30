@@ -1,0 +1,12 @@
+# Fake ESP32 demo: <delay_seconds> EVT <source> <detail>
+# Run: python sim/fake_esp32.py --port /tmp/petbot-esp --script sim/demo.script
+1.0 EVT touch head
+1.5 EVT touch left
+1.5 EVT touch right
+1.5 EVT touch back
+1.5 EVT imu pickup
+1.5 EVT imu shake
+1.5 EVT imu tilt
+1.5 EVT imu fall
+# Wait past the 30 s idle timeout: brain sends MOOD sleepy, then wakes to neutral here.
+31 EVT touch head

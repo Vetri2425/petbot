@@ -9,7 +9,7 @@ description = "PetBot Linux-side brain (mood, voice, AI)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["pyserial>=3.5"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
@@ -22,6 +22,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+src = ["src"]
 target-version = "py311"
 
 [tool.ruff.lint]
