@@ -149,6 +149,189 @@ static void draw_eye(lv_layer_t * layer, int32_t ox, int32_t oy, const eye_geom_
     }
 }
 
+/* ---- line style: glowing strokes, eyebrows and a mouth ---- */
+
+#define LINE_MAX_PTS 20
+
+typedef struct {
+    float x[LINE_MAX_PTS], y[LINE_MAX_PTS];
+    int n;
+} poly_t;
+
+static void poly_add(poly_t * p, float x, float y)
+{
+    if(p->n < LINE_MAX_PTS) {
+        p->x[p->n] = x;
+        p->y[p->n] = y;
+        ++p->n;
+    }
+}
+
+/* Quadratic curve from (x0,y0) to (x1,y1) pulled toward (cx,cy), as a polyline. */
+static void poly_curve(poly_t * p, float x0, float y0, float cx, float cy, float x1, float y1)
+{
+    for(int i = 0; i <= 16; ++i) { /* 16 chords: smooth even with the wide glow */
+        const float t = i / 16.0f, u = 1.0f - t;
+        poly_add(p, u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1);
+    }
+}
+
+/* The glow is drawn opaque in the eye color pre-blended with the background: it looks
+ * like a translucent halo on the black screen, but overlapping segments don't stack up
+ * (no beads along curves) and it's cheaper to render. */
+static uint32_t glow_hex(uint32_t opa)
+{
+    uint32_t out = 0;
+    for(int shift = 0; shift <= 16; shift += 8) {
+        const uint32_t eye = (FACE_COLOR_EYE >> shift) & 0xFF, bg = (FACE_COLOR_BG >> shift) & 0xFF;
+        out |= ((eye * opa + bg * (255 - opa)) / 255) << shift;
+    }
+    return out;
+}
+
+/* Glow pass (wide) then the core line, so the glow never covers a stroke. */
+static void glow_poly(lv_layer_t * layer, const poly_t * p, float width)
+{
+    for(int pass = 0; pass < 2; ++pass) {
+        const float w = pass ? width : width + FACE_LINE_GLOW;
+        const uint32_t color = pass ? FACE_COLOR_EYE : glow_hex(FACE_LINE_GLOW_OPA);
+        for(int i = 0; i + 1 < p->n; ++i) {
+            stroke_line(layer, p->x[i], p->y[i], p->x[i + 1], p->y[i + 1], w, color, LV_OPA_COVER);
+        }
+        if(p->n == 1) stroke_line(layer, p->x[0], p->y[0], p->x[0], p->y[0], w, color, LV_OPA_COVER);
+    }
+}
+
+static void glow_ring(lv_layer_t * layer, float cx, float cy, float radius, float width)
+{
+    stroke_arc(layer, cx, cy, radius + FACE_LINE_GLOW / 2.0f, 0, 360, width + FACE_LINE_GLOW,
+               glow_hex(FACE_LINE_GLOW_OPA), LV_OPA_COVER);
+    stroke_arc(layer, cx, cy, radius, 0, 360, width, FACE_COLOR_EYE, LV_OPA_COVER);
+}
+
+static void glow_fill(lv_layer_t * layer, float x1, float y1, float x2, float y2, bool round)
+{
+    const float g = FACE_LINE_GLOW / 2.0f;
+    const int32_t r = round ? LV_RADIUS_CIRCLE : 0;
+    fill_rect(layer, x1 - g, y1 - g, x2 + g, y2 + g, r, glow_hex(FACE_LINE_GLOW_OPA / 2),
+              LV_OPA_COVER);
+    fill_rect(layer, x1 - g / 2, y1 - g / 2, x2 + g / 2, y2 + g / 2, r,
+              glow_hex(FACE_LINE_GLOW_OPA), LV_OPA_COVER);
+    fill_rect(layer, x1, y1, x2, y2, r, FACE_COLOR_EYE, LV_OPA_COVER);
+}
+
+/* Filled lower half-disc (angry eye, grin), with a glow. */
+static void glow_half_disc(lv_layer_t * layer, float cx, float cy, float radius)
+{
+    if(radius < 2.0f) return;
+    lv_draw_arc_dsc_t d;
+    lv_draw_arc_dsc_init(&d); /* square ends: round caps would poke above the flat top */
+    d.center.x = px(cx);
+    d.center.y = px(cy);
+    d.radius = (uint16_t)px(radius + FACE_LINE_GLOW / 2.0f);
+    d.width = px(radius + FACE_LINE_GLOW / 2.0f);
+    d.start_angle = 0;
+    d.end_angle = 180;
+    d.color = lv_color_hex(glow_hex(FACE_LINE_GLOW_OPA));
+    d.opa = LV_OPA_COVER;
+    lv_draw_arc(layer, &d);
+    lv_draw_arc_dsc_init(&d);
+    d.center.x = px(cx);
+    d.center.y = px(cy);
+    d.radius = (uint16_t)px(radius);
+    d.width = px(radius);
+    d.start_angle = 0;
+    d.end_angle = 180;
+    d.color = lv_color_hex(FACE_COLOR_EYE);
+    d.opa = LV_OPA_COVER;
+    lv_draw_arc(layer, &d);
+}
+
+static void draw_line_eye(lv_layer_t * layer, float cx, float cy, float w, float h, uint8_t kind,
+                          int side)
+{
+    const float stroke = FACE_LINE_STROKE;
+    poly_t p = {{0}, {0}, 0};
+    switch(kind) {
+        case FACE_EYE_PILL:
+            glow_fill(layer, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, true);
+            return;
+        case FACE_EYE_CRESCENT:
+            poly_curve(&p, cx - w / 2, cy + h * 0.25f, cx, cy - h * 0.6f, cx + w / 2, cy + h * 0.25f);
+            break;
+        case FACE_EYE_CHEVRON:
+            poly_add(&p, cx - w / 2, cy + h * 0.3f);
+            poly_add(&p, cx, cy - h * 0.3f);
+            poly_add(&p, cx + w / 2, cy + h * 0.3f);
+            break;
+        case FACE_EYE_DROOP:
+            poly_curve(&p, cx - w / 2, cy - h * 0.05f, cx, cy + h * 0.45f, cx + w / 2, cy - h * 0.05f);
+            break;
+        case FACE_EYE_HALF:
+            glow_half_disc(layer, cx, cy - h * 0.15f, fminf(w / 2.0f, h * 0.65f));
+            return;
+        case FACE_EYE_FLAT:
+            poly_add(&p, cx - w * 0.45f, cy);
+            poly_add(&p, cx + w * 0.45f, cy);
+            break;
+        case FACE_EYE_RING: {
+            const float r = fminf(w, h) / 2.0f - stroke / 2.0f;
+            if(r < 2.0f) return;
+            glow_ring(layer, cx, cy, r, stroke);
+            fill_ellipse(layer, cx, cy, r * 0.32f, r * 0.32f, FACE_COLOR_EYE, LV_OPA_COVER);
+            return;
+        }
+        case FACE_EYE_SQUINT: { /* screen-left eye is '>', screen-right is '<' */
+            const float d = side ? -1.0f : 1.0f;
+            poly_add(&p, cx - d * w * 0.35f, cy - h * 0.42f);
+            poly_add(&p, cx + d * w * 0.35f, cy);
+            poly_add(&p, cx - d * w * 0.35f, cy + h * 0.42f);
+            break;
+        }
+        default: return;
+    }
+    glow_poly(layer, &p, stroke);
+}
+
+static void draw_brow(lv_layer_t * layer, float cx, float top, int side, const line_render_t * l)
+{
+    const float inner = side ? -1.0f : 1.0f; /* toward the other eye */
+    const float y = top - FACE_LINE_BROW_GAP - l->brow_lift * FACE_LINE_BROW_LIFT_PX;
+    const float half = FACE_LINE_BROW_LEN / 2.0f, t = l->brow_tilt * FACE_LINE_BROW_TILT_PX;
+    poly_t p = {{0}, {0}, 0};
+    poly_add(&p, cx - inner * half, y + t * 0.5f);
+    poly_add(&p, cx + inner * half, y - t);
+    glow_poly(layer, &p, FACE_LINE_STROKE * 0.85f);
+}
+
+static void draw_mouth(lv_layer_t * layer, float mx, float my, uint8_t kind, float scale)
+{
+    const float w = FACE_LINE_MOUTH_W * scale, h = FACE_LINE_MOUTH_H * scale;
+    const float stroke = FACE_LINE_STROKE * 0.85f;
+    if(w < 2.0f) return;
+    poly_t p = {{0}, {0}, 0};
+    switch(kind) {
+        case FACE_MOUTH_SMILE:
+            poly_curve(&p, mx - w / 2, my - h * 0.3f, mx, my + h * 1.1f, mx + w / 2, my - h * 0.3f);
+            break;
+        case FACE_MOUTH_GRIN: glow_half_disc(layer, mx, my - h * 0.5f, w * 0.45f); return;
+        case FACE_MOUTH_FROWN:
+            poly_curve(&p, mx - w / 2, my + h * 0.4f, mx, my - h * 0.9f, mx + w / 2, my + h * 0.4f);
+            break;
+        case FACE_MOUTH_FLAT:
+            poly_add(&p, mx - w * 0.4f, my);
+            poly_add(&p, mx + w * 0.4f, my);
+            break;
+        case FACE_MOUTH_O: glow_ring(layer, mx, my, h * 0.75f, stroke * 0.85f); return;
+        case FACE_MOUTH_WAVY:
+            for(int i = 0; i < 5; ++i) poly_add(&p, mx - w / 2 + w * i / 4.0f, my + ((i % 2) ? -h : h) * 0.3f);
+            break;
+        case FACE_MOUTH_DOT: fill_ellipse(layer, mx, my, h * 0.4f, h * 0.4f, FACE_COLOR_EYE, LV_OPA_COVER); return;
+        default: return;
+    }
+    glow_poly(layer, &p, stroke);
+}
+
 /* ---- glyph eyes (unit coordinates: -0.5..0.5 of the glyph box) ---- */
 
 static void draw_heart(lv_layer_t * layer, float cx, float cy, float sx, float sy)
@@ -334,16 +517,33 @@ static void draw_music(lv_layer_t * layer, int32_t ox, int32_t oy, const face_re
     }
 }
 
+static float pop_scale(const face_render_t * r)
+{
+    return (r->glyph_w + r->glyph_h) / 2.0f;
+}
+
 void face_draw_frame(lv_layer_t * layer, int32_t ox, int32_t oy, const face_render_t * r)
 {
+    const bool line = r->style == FACE_STYLE_LINE;
     for(int side = 0; side < 2; ++side) {
         const eye_geom_t * g = &r->eyes[side];
-        if(r->glyph == FACE_GLYPH_NONE) {
-            draw_eye(layer, ox, oy, g, side, r->glyph_w, r->glyph_h);
-        }
-        else {
+        if(r->glyph != FACE_GLYPH_NONE) {
             draw_glyph(layer, ox + g->cx, oy + g->cy, r);
         }
+        else if(line) {
+            draw_line_eye(layer, ox + g->cx, oy + g->cy, g->w * r->glyph_w, g->h * r->glyph_h,
+                          r->line.eye[side], side);
+        }
+        else {
+            draw_eye(layer, ox, oy, g, side, r->glyph_w, r->glyph_h);
+        }
+        if(line && r->line.brow_on[side]) {
+            draw_brow(layer, ox + g->cx, oy + g->cy - g->h * r->glyph_h / 2.0f, side, &r->line);
+        }
+    }
+    if(line && r->line.mouth != FACE_MOUTH_NONE) {
+        draw_mouth(layer, ox + r->line.mouth_x, oy + r->line.mouth_y, r->line.mouth,
+                   r->line.mouth_scale * pop_scale(r));
     }
     const float * a = r->acc;
     if(a[FACE_ACC_BLUSH] >= 0.0f) draw_blush(layer, ox, oy, r, a[FACE_ACC_BLUSH]);
@@ -381,14 +581,29 @@ int face_render_boxes(const face_render_t * r, lv_area_t * out, int max)
     do {                      \
         if(n < max) out[n++] = (a); \
     } while(0)
+    const bool line = r->style == FACE_STYLE_LINE;
+    const float pad = line ? FACE_LINE_GLOW + FACE_LINE_STROKE : 3.0f; /* glow and caps */
     for(int side = 0; side < 2; ++side) {
         const eye_geom_t * g = &r->eyes[side];
         const float sw = r->glyph_w > 1.0f ? r->glyph_w : 1.0f;
         const float sh = r->glyph_h > 1.0f ? r->glyph_h : 1.0f;
         const float glyph = FACE_GLYPH_SIZE * 0.62f * (sw > sh ? sw : sh); /* spiral is widest */
-        const float hw = fmaxf(g->w * sw / 2.0f + 3.0f, glyph);
-        const float hh = fmaxf(g->h * sh / 2.0f + 3.0f, glyph);
-        ADD(box(g->cx - hw, g->cy - hh, g->cx + hw, g->cy + hh));
+        float hw = fmaxf(g->w * sw / 2.0f + pad, glyph);
+        float hh = fmaxf(g->h * sh / 2.0f + pad, glyph);
+        float top = g->cy - hh;
+        if(line && r->line.brow_on[side]) {
+            hw = fmaxf(hw, FACE_LINE_BROW_LEN / 2.0f + pad);
+            const float lift = fmaxf(0.0f, r->line.brow_lift) * FACE_LINE_BROW_LIFT_PX;
+            const float tilt = fabsf(r->line.brow_tilt) * FACE_LINE_BROW_TILT_PX;
+            top = fminf(top, g->cy - g->h * sh / 2.0f - FACE_LINE_BROW_GAP - lift - tilt - pad);
+        }
+        ADD(box(g->cx - hw, top, g->cx + hw, g->cy + hh));
+    }
+    if(line && r->line.mouth != FACE_MOUTH_NONE) {
+        const float sc = fmaxf(1.0f, r->line.mouth_scale * pop_scale(r));
+        const float hw = FACE_LINE_MOUTH_W * sc * 0.6f + pad, hh = FACE_LINE_MOUTH_H * sc * 1.4f + pad;
+        ADD(box(r->line.mouth_x - hw, r->line.mouth_y - hh, r->line.mouth_x + hw,
+                r->line.mouth_y + hh));
     }
     const float * a = r->acc;
     if(a[FACE_ACC_BLUSH] >= 0.0f) {

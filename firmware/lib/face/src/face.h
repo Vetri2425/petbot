@@ -12,7 +12,13 @@
 extern "C" {
 #endif
 
-/* Create the face (FACE_SCREEN_W x FACE_SCREEN_H, centered) on `parent`. Call once. */
+typedef enum {
+    FACE_STYLE_FILLED, /* two filled eyes with lids */
+    FACE_STYLE_LINE    /* glowing emoticon-like line art with eyebrows and a mouth */
+} face_style_t;
+
+/* Create the face (FACE_SCREEN_W x FACE_SCREEN_H, centered) on `parent`. Call once.
+ * Starts in FACE_DEFAULT_STYLE (face_style.h). */
 lv_obj_t * face_init(lv_obj_t * parent);
 
 /* Animate to a mood by protocol name ("happy", ...), intensity 0-100.
@@ -25,6 +31,10 @@ bool face_play_anim(const char * name);
 
 /* Advance all animation by `elapsed_ms` and redraw. Call regularly (e.g. every frame). */
 void face_tick(uint32_t elapsed_ms);
+
+/* Switch the drawing style at runtime (both share all motion). */
+void face_set_style(face_style_t style);
+face_style_t face_get_style(void);
 
 /* Turn idle life (random blinks, glances, breathing) on or off. On by default;
  * the simulator turns it off for repeatable snapshots. */

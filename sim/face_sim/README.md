@@ -41,14 +41,16 @@ After 30 s without events the brain sends `MOOD sleepy 0.40`.
 
 ## Snapshots
 
-`--snapshot <dir>` turns idle life off (so frames are repeatable) and writes:
-- `contact_sheet.png`: every mood (at 100), glyph eye and accessory, labelled.
+`--snapshot <dir>` turns idle life off (so frames are repeatable) and writes the full set for
+each face style, in `<dir>/line/` (the default: glowing line art, eyebrows, mouth) and
+`<dir>/filled/` (two filled eyes with lids):
+- `contact_sheet.png`: every mood (at 50 and 100), glyph eye and accessory, labelled.
 - `strip_spring_neutral_to_surprised.png`, `strip_saccade_look_left.png`: frames at
   0/40/80/120/200 ms of one spring transition and one saccade.
 - `mood_<n>_<name>_{050,100}.png`, `glyph_<name>.png`, `accessory_<name>.png`,
   `transition_<from>_to_<to>_<ms>.png`, `blink_*.png`, `anim_*.png`.
 
-It also runs checks and exits non-zero if one fails: every protocol mood and every known
+It also runs the checks for both styles and exits non-zero if one fails: every protocol mood and every known
 ANIM is implemented, left/right follow ADR 0014, and partial redraws match a full render
 (on failure it writes `redraw_expected.png` / `redraw_shown.png`). CI uploads the folder
 as the `face-snapshots` artifact.

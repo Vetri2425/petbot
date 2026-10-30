@@ -454,7 +454,7 @@ bool saveStrip(lv_obj_t* face, const std::string& path, const char* title, void 
     return writePng(tile(cells, 5), path);
 }
 
-int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
+int snapshotStyle(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
         fprintf(stderr, "error: cannot create %s: %s\n", dir.c_str(), strerror(errno));
         return 1;
@@ -478,12 +478,10 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
             snprintf(name, sizeof(name), "/mood_%u_%s_%03u.png", static_cast<unsigned>(m + 1),
                      mood, level);
             ok &= saveFace(face, dir + name);
-            if (level == 100) {
-                Image img;
-                snprintf(name, sizeof(name), "mood %s", mood);
-                ok &= captureLabeled(face, name, img);
-                sheet.push_back(img);
-            }
+            Image img;
+            snprintf(name, sizeof(name), "mood %s %u", mood, static_cast<unsigned>(level));
+            ok &= captureLabeled(face, name, img);
+            sheet.push_back(img);
         }
     }
 
@@ -519,7 +517,7 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
         sheet.push_back(img);
         clearFx();
     }
-    ok &= writePng(tile(sheet, 5), dir + "/contact_sheet.png");
+    ok &= writePng(tile(sheet, 6), dir + "/contact_sheet.png");
 
     // Mid-transition frames (springs: these overshoot and settle).
     const struct {
@@ -584,6 +582,26 @@ int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
     ok &= checkDirections(face);
     ok &= checkPartialRedraw(disp, face, dir);
     return ok ? 0 : 1;
+}
+
+// Every style gets the full set of snapshots and checks, in its own folder.
+int runSnapshots(lv_display_t* disp, lv_obj_t* face, const std::string& dir) {
+    if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "error: cannot create %s: %s\n", dir.c_str(), strerror(errno));
+        return 1;
+    }
+    const struct {
+        face_style_t style;
+        const char* name;
+    } styles[] = {{FACE_STYLE_LINE, "line"}, {FACE_STYLE_FILLED, "filled"}};
+    int rc = 0;
+    for (const auto& st : styles) {
+        printf("[style] %s\n", st.name);
+        face_set_style(st.style);
+        rc |= snapshotStyle(disp, face, dir + "/" + st.name);
+    }
+    face_set_style(FACE_DEFAULT_STYLE);
+    return rc;
 }
 
 void usage() {

@@ -5,6 +5,13 @@
 #ifndef PETBOT_FACE_STYLE_H
 #define PETBOT_FACE_STYLE_H
 
+#include <stdint.h>
+
+/* ---- Face style --------------------------------------------------------------------- */
+/* FACE_STYLE_LINE: glowing emoticon-like line art with eyebrows and a mouth (calm eyes are
+ * filled pills). FACE_STYLE_FILLED: two filled eyes with lids. face_set_style() overrides. */
+#define FACE_DEFAULT_STYLE FACE_STYLE_LINE
+
 /* ---- Screen and colors ------------------------------------------------------------- */
 #define FACE_SCREEN_W 320          /* px, 2.0" ST7789 in landscape */
 #define FACE_SCREEN_H 240
@@ -103,6 +110,89 @@ typedef struct {
 #define FACE_EXPR_SLEEPY {.lid_top = 0.55f, .dy = 8.0f}
 #define FACE_EXPR_CURIOUS {.grow_left = 0.18f, .grow_right = -0.10f, .tilt = 10.0f}
 #define FACE_EXPR_SURPRISED {.grow_w = 0.22f, .grow_h = 0.12f, .round = 1.0f, .dy = -6.0f}
+
+/* ---- Line style ---------------------------------------------------------------------- */
+#define FACE_LINE_EYE_SPACING 112       /* px between eye centers */
+#define FACE_LINE_EYE_Y (-16)           /* px, eye centers relative to the screen middle */
+#define FACE_LINE_PILL_W 34             /* calm (neutral) eyes are filled pills */
+#define FACE_LINE_PILL_H 56
+#define FACE_LINE_SHAPE_W 52            /* box for line-art eyes */
+#define FACE_LINE_SHAPE_H 44
+#define FACE_LINE_RING_D 52             /* ring-eye diameter */
+#define FACE_LINE_STROKE 7              /* px line width */
+#define FACE_LINE_GLOW 9                /* px of glow around every line and pill */
+#define FACE_LINE_GLOW_OPA 55           /* 0-255 */
+#define FACE_LINE_BLINK_FLATTEN 0.85f   /* a blink squashes the eye this much */
+#define FACE_LINE_BROW_LEN 42
+#define FACE_LINE_BROW_GAP 14           /* px above the eye box */
+#define FACE_LINE_BROW_TILT_PX 9        /* inner end up (worried) or down (angry) at tilt 1 */
+#define FACE_LINE_BROW_LIFT_PX 10       /* raised brow at lift 1 */
+#define FACE_LINE_MOUTH_Y 54            /* px below the screen middle */
+#define FACE_LINE_MOUTH_W 40
+#define FACE_LINE_MOUTH_H 13
+#define FACE_LINE_MOUTH_GAZE 0.5f       /* the mouth follows the gaze this much */
+#define FACE_LINE_MIN_INTENSITY 30      /* weaker moods show the calm face */
+#define FACE_LINE_LAUGH_INTENSITY 90    /* happy at/above this laughs (^ ^ and a grin) */
+#define FACE_LINE_FURIOUS_INTENSITY 85  /* angry at/above this fumes (> < and a wavy mouth) */
+
+typedef enum {
+    FACE_EYE_PILL,     /* filled pill (calm) */
+    FACE_EYE_CRESCENT, /* upward arc (happy) */
+    FACE_EYE_CHEVRON,  /* ^ (laughing) */
+    FACE_EYE_DROOP,    /* low curve (sad) */
+    FACE_EYE_HALF,     /* filled lower half (angry) */
+    FACE_EYE_FLAT,     /* - (sleepy, squint) */
+    FACE_EYE_RING,     /* O with a pupil (surprised, curious) */
+    FACE_EYE_SQUINT    /* > < (fuming, scrunched) */
+} face_line_eye_t;
+
+typedef enum {
+    FACE_MOUTH_NONE,
+    FACE_MOUTH_SMILE,
+    FACE_MOUTH_GRIN,  /* open half-disc */
+    FACE_MOUTH_FROWN,
+    FACE_MOUTH_FLAT,
+    FACE_MOUTH_O,
+    FACE_MOUTH_WAVY,
+    FACE_MOUTH_DOT
+} face_mouth_t;
+
+typedef enum { FACE_BROWS_NONE, FACE_BROWS_BOTH, FACE_BROWS_LEFT } face_brows_t;
+
+/* A line-style expression. Eyes are in the robot's frame (ADR 0014). Intensity scales
+ * brow tilt/lift and mouth size; eye and mouth shapes swap with a squash pop. */
+typedef struct {
+    uint8_t eye_right;  /* face_line_eye_t, robot's right eye (screen left) */
+    uint8_t eye_left;   /* robot's left eye (screen right) */
+    uint8_t mouth;      /* face_mouth_t */
+    uint8_t brows;      /* face_brows_t; LEFT = robot's left brow only */
+    float brow_tilt;    /* +1 worried (inner ends up), -1 angry (inner ends down) */
+    float brow_lift;    /* 0..1 raise */
+    float mouth_scale;
+} face_line_expr_t;
+
+#define FACE_LINE_NEUTRAL {.eye_right = FACE_EYE_PILL, .eye_left = FACE_EYE_PILL, .mouth_scale = 1.0f}
+#define FACE_LINE_HAPPY {.eye_right = FACE_EYE_CRESCENT, .eye_left = FACE_EYE_CRESCENT, \
+                         .mouth = FACE_MOUTH_SMILE, .mouth_scale = 1.0f}
+#define FACE_LINE_LAUGH {.eye_right = FACE_EYE_CHEVRON, .eye_left = FACE_EYE_CHEVRON, \
+                         .mouth = FACE_MOUTH_GRIN, .mouth_scale = 1.0f}
+#define FACE_LINE_SAD {.eye_right = FACE_EYE_DROOP, .eye_left = FACE_EYE_DROOP, \
+                       .mouth = FACE_MOUTH_FROWN, .brows = FACE_BROWS_BOTH, .brow_tilt = 1.0f, \
+                       .mouth_scale = 0.8f}
+#define FACE_LINE_ANGRY {.eye_right = FACE_EYE_HALF, .eye_left = FACE_EYE_HALF, \
+                         .mouth = FACE_MOUTH_FLAT, .brows = FACE_BROWS_BOTH, .brow_tilt = -1.0f, \
+                         .mouth_scale = 0.9f}
+#define FACE_LINE_FURIOUS {.eye_right = FACE_EYE_SQUINT, .eye_left = FACE_EYE_SQUINT, \
+                           .mouth = FACE_MOUTH_WAVY, .brows = FACE_BROWS_BOTH, .brow_tilt = -1.0f, \
+                           .mouth_scale = 1.0f}
+#define FACE_LINE_SLEEPY {.eye_right = FACE_EYE_FLAT, .eye_left = FACE_EYE_FLAT, \
+                          .mouth = FACE_MOUTH_DOT, .mouth_scale = 1.0f}
+#define FACE_LINE_CURIOUS {.eye_right = FACE_EYE_FLAT, .eye_left = FACE_EYE_RING, \
+                           .mouth = FACE_MOUTH_O, .brows = FACE_BROWS_LEFT, .brow_lift = 1.0f, \
+                           .mouth_scale = 0.7f}
+#define FACE_LINE_SURPRISED {.eye_right = FACE_EYE_RING, .eye_left = FACE_EYE_RING, \
+                             .mouth = FACE_MOUTH_O, .brows = FACE_BROWS_BOTH, .brow_lift = 1.0f, \
+                             .mouth_scale = 1.0f}
 
 /* ---- Glyph eyes: each eye becomes a vector symbol for a while ------------------------- */
 #define FACE_GLYPH_SIZE 92              /* px, glyph box at scale 1 */

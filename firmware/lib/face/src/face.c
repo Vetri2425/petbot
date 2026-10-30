@@ -16,6 +16,23 @@ typedef struct {
     face_expr_t expr;
 } mood_def_t;
 
+typedef struct {
+    const char * name;
+    face_line_expr_t normal;
+    face_line_expr_t strong; /* shown at/above strong_at intensity */
+    uint8_t strong_at;       /* 101: never */
+} line_mood_t;
+
+static const line_mood_t k_line_moods[] = {
+    {"neutral", FACE_LINE_NEUTRAL, FACE_LINE_NEUTRAL, 101},
+    {"happy", FACE_LINE_HAPPY, FACE_LINE_LAUGH, FACE_LINE_LAUGH_INTENSITY},
+    {"sad", FACE_LINE_SAD, FACE_LINE_SAD, 101},
+    {"angry", FACE_LINE_ANGRY, FACE_LINE_FURIOUS, FACE_LINE_FURIOUS_INTENSITY},
+    {"sleepy", FACE_LINE_SLEEPY, FACE_LINE_SLEEPY, 101},
+    {"curious", FACE_LINE_CURIOUS, FACE_LINE_CURIOUS, 101},
+    {"surprised", FACE_LINE_SURPRISED, FACE_LINE_SURPRISED, 101},
+};
+
 static const mood_def_t k_moods[] = {
     {"neutral", FACE_EXPR_NEUTRAL}, {"happy", FACE_EXPR_HAPPY},
     {"sad", FACE_EXPR_SAD},         {"angry", FACE_EXPR_ANGRY},
@@ -48,6 +65,11 @@ static struct {
     lv_obj_t * obj;
     bool idle;
     uint32_t rng;
+    face_style_t style;
+
+    /* line style: shapes swap with the glyph pop; brow and mouth amounts are springs */
+    face_line_expr_t line_want, line_shown;
+    spring_t brow_tilt, brow_lift, mouth_scale;
 
     face_expr_t target; /* mood expression scaled by intensity */
     const char * mood;
@@ -205,12 +227,32 @@ static void eye_targets(int side, float out[P_COUNT])
     const float grow = 1.0f + (robot_left ? e->grow_left : e->grow_right);
     out[P_W] = FACE_EYE_W * (1.0f + e->grow_w) * grow;
     out[P_H] = FACE_EYE_H * (1.0f + e->grow_h) * grow;
+    if(s.style == FACE_STYLE_LINE) {
+        const uint8_t kind = robot_left ? s.line_shown.eye_left : s.line_shown.eye_right;
+        out[P_W] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_W
+                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_W;
+        out[P_H] = kind == FACE_EYE_PILL ? FACE_LINE_PILL_H
+                   : kind == FACE_EYE_RING ? FACE_LINE_RING_D : FACE_LINE_SHAPE_H;
+    }
     out[P_DY] = e->dy + (robot_left ? -e->tilt : e->tilt);
     out[P_ROUND] = e->round;
     out[P_LID] = e->lid_top;
     out[P_SLANT_IN] = e->slant_in;
     out[P_SLANT_OUT] = e->slant_out;
     out[P_CHEEK] = e->cheek;
+}
+
+static bool same_line_shapes(const face_line_expr_t * a, const face_line_expr_t * b)
+{
+    return a->eye_right == b->eye_right && a->eye_left == b->eye_left && a->mouth == b->mouth &&
+           a->brows == b->brows;
+}
+
+/* Shown content (glyph, and the line shapes in line style) differs from what's wanted. */
+static bool content_pending(void)
+{
+    if(s.glyph_want != s.glyph_shown) return true;
+    return s.style == FACE_STYLE_LINE && !same_line_shapes(&s.line_want, &s.line_shown);
 }
 
 static void step_springs(float dt)
@@ -227,8 +269,12 @@ static void step_springs(float dt)
     spring_step(&s.gaze_x, s.aim_x, FACE_SPRING_GAZE_K, FACE_SPRING_GAZE_C, dt);
     spring_step(&s.gaze_y, s.aim_y, FACE_SPRING_GAZE_K, FACE_SPRING_GAZE_C, dt);
     spring_step(&s.squash, 0.0f, FACE_SPRING_SQUASH_K, FACE_SPRING_SQUASH_C, dt);
-    const float glyph_target = s.glyph_want != s.glyph_shown ? 0.0f : 1.0f;
-    spring_step(&s.glyph_scale, glyph_target, FACE_SPRING_GLYPH_K, FACE_SPRING_GLYPH_C, dt);
+    spring_step(&s.glyph_scale, content_pending() ? 0.0f : 1.0f, FACE_SPRING_GLYPH_K,
+                FACE_SPRING_GLYPH_C, dt);
+    spring_step(&s.brow_tilt, s.line_want.brow_tilt, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.brow_lift, s.line_want.brow_lift, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C, dt);
+    spring_step(&s.mouth_scale, s.line_want.mouth_scale, FACE_SPRING_SHAPE_K, FACE_SPRING_SHAPE_C,
+                dt);
 }
 
 static void snap_springs(void)
@@ -261,35 +307,77 @@ static void update_glyph(uint32_t dt)
         s.glyph_want = s.sleep_closed ? FACE_GLYPH_CLOSED : FACE_GLYPH_NONE;
     }
     /* The old glyph shrinks away; once small, swap and pop the new one in. */
-    if(s.glyph_want != s.glyph_shown && s.glyph_scale.x <= FACE_GLYPH_SWAP_BELOW) {
+    if(content_pending() && s.glyph_scale.x <= FACE_GLYPH_SWAP_BELOW) {
         s.glyph_shown = s.glyph_want;
+        s.line_shown = s.line_want;
     }
 }
 
 /* ---- frame geometry ---- */
 
+/* The mouth (and brows) a glyph shows with, in line style. */
+static uint8_t glyph_mouth(face_glyph_t glyph, uint8_t mood_mouth)
+{
+    switch(glyph) {
+        case FACE_GLYPH_HEART: return FACE_MOUTH_SMILE;
+        case FACE_GLYPH_STAR: return FACE_MOUTH_GRIN;
+        case FACE_GLYPH_SPIRAL: return FACE_MOUTH_WAVY;
+        case FACE_GLYPH_X: return FACE_MOUTH_FLAT;
+        case FACE_GLYPH_CLOSED: return FACE_MOUTH_DOT;
+        default: return mood_mouth;
+    }
+}
+
+static void build_line_render(line_render_t * l, float hop_dy)
+{
+    const face_line_expr_t * x = &s.line_shown;
+    l->eye[0] = x->eye_right; /* screen left = the robot's right (ADR 0014) */
+    l->eye[1] = x->eye_left;
+    const bool glyph = s.glyph_shown != FACE_GLYPH_NONE;
+    l->mouth = glyph_mouth(s.glyph_shown, x->mouth);
+    l->brow_on[0] = !glyph && x->brows == FACE_BROWS_BOTH;
+    l->brow_on[1] = !glyph && (x->brows == FACE_BROWS_BOTH || x->brows == FACE_BROWS_LEFT);
+    l->brow_tilt = s.brow_tilt.x;
+    l->brow_lift = s.brow_lift.x;
+    l->mouth_scale = fmaxf(0.0f, s.mouth_scale.x);
+    const float dy = (s.eye[0][P_DY].x + s.eye[1][P_DY].x) / 2.0f;
+    l->mouth_x = FACE_SCREEN_W / 2.0f + s.gaze_x.x * FACE_LINE_MOUTH_GAZE;
+    l->mouth_y = FACE_SCREEN_H / 2.0f + FACE_LINE_MOUTH_Y + dy * 0.5f +
+                 s.gaze_y.x * FACE_LINE_MOUTH_GAZE + hop_dy;
+}
+
 static void build_render(float blink, float breath, float hop_dy)
 {
     face_render_t * r = &s.render;
+    const bool line = s.style == FACE_STYLE_LINE;
+    r->style = s.style;
+    if(line) {
+        build_line_render(&r->line, hop_dy);
+    }
+    else {
+        memset(&r->line, 0, sizeof(r->line));
+    }
     const float squash = clampf(s.squash.x, -FACE_SQUASH_MAX, FACE_SQUASH_MAX);
     for(int side = 0; side < 2; ++side) {
         const spring_t * e = s.eye[side];
         eye_geom_t * g = &r->eyes[side];
         const float dir = side ? 1.0f : -1.0f;
+        const float spacing = line ? FACE_LINE_EYE_SPACING : FACE_EYE_SPACING;
         g->w = fmaxf(4.0f, e[P_W].x * (1.0f + squash) * (1.0f + FACE_BLINK_SQUASH * blink));
         g->h = fmaxf(4.0f, e[P_H].x * (1.0f - squash) * (1.0f + FACE_BREATH_SCALE * breath));
-        g->cx = FACE_SCREEN_W / 2.0f + dir * FACE_EYE_SPACING / 2.0f + s.gaze_x.x;
-        g->cy = FACE_SCREEN_H / 2.0f + FACE_EYE_Y + e[P_DY].x + s.gaze_y.x + hop_dy +
-                FACE_BREATH_DY * breath;
+        if(line) g->h = fmaxf(4.0f, g->h * (1.0f - FACE_LINE_BLINK_FLATTEN * blink));
+        g->cx = FACE_SCREEN_W / 2.0f + dir * spacing / 2.0f + s.gaze_x.x;
+        g->cy = FACE_SCREEN_H / 2.0f + (line ? FACE_LINE_EYE_Y : FACE_EYE_Y) + e[P_DY].x +
+                s.gaze_y.x + hop_dy + FACE_BREATH_DY * breath;
         const float max_r = (g->w < g->h ? g->w : g->h) / 2.0f;
         const float base_r = FACE_EYE_RADIUS < max_r ? FACE_EYE_RADIUS : max_r;
         g->radius = base_r + (max_r - base_r) * clampf(e[P_ROUND].x, 0.0f, 1.0f);
-        const float blink_lid = blink * FACE_BLINK_CLOSED;
-        const float lid = settled(e[P_LID].x);
+        const float blink_lid = line ? 0.0f : blink * FACE_BLINK_CLOSED; /* line: flattens */
+        const float lid = line ? 0.0f : settled(e[P_LID].x);
         g->lid_top = lid > blink_lid ? lid : blink_lid;
-        g->slant_in = settled(e[P_SLANT_IN].x) * (1.0f - g->lid_top);
-        g->slant_out = settled(e[P_SLANT_OUT].x) * (1.0f - g->lid_top);
-        g->cheek = settled(e[P_CHEEK].x);
+        g->slant_in = line ? 0.0f : settled(e[P_SLANT_IN].x) * (1.0f - g->lid_top);
+        g->slant_out = line ? 0.0f : settled(e[P_SLANT_OUT].x) * (1.0f - g->lid_top);
+        g->cheek = line ? 0.0f : settled(e[P_CHEEK].x);
     }
     /* Pop: the scale overshoots past 1 and squashes on the way. */
     const float scale = fmaxf(0.0f, s.glyph_scale.x);
@@ -341,6 +429,10 @@ lv_obj_t * face_init(lv_obj_t * parent)
     memset(&s, 0, sizeof(s));
     s.idle = true;
     s.rng = 0x5eed1234u;
+    s.style = FACE_DEFAULT_STYLE;
+    const face_line_expr_t calm = FACE_LINE_NEUTRAL;
+    s.line_want = s.line_shown = calm;
+    s.mouth_scale.x = calm.mouth_scale;
     s.slow = 1.0f;
     s.mood = "neutral";
     s.glance_wait = FACE_GLANCE_INTERVAL_MIN_MS;
@@ -376,6 +468,21 @@ bool face_set_mood(const char * mood, uint8_t intensity)
     float * to = (float *)&s.target;
     for(size_t i = 0; i < EXPR_FIELDS; ++i) to[i] = src[i] * k;
 
+    for(size_t i = 0; i < sizeof(k_line_moods) / sizeof(k_line_moods[0]); ++i) {
+        const line_mood_t * lm = &k_line_moods[i];
+        if(strcmp(lm->name, def->name) != 0) continue;
+        if(intensity < FACE_LINE_MIN_INTENSITY) {
+            const face_line_expr_t calm = FACE_LINE_NEUTRAL;
+            s.line_want = calm;
+        }
+        else {
+            s.line_want = intensity >= lm->strong_at ? lm->strong : lm->normal;
+            s.line_want.brow_tilt *= k;
+            s.line_want.brow_lift *= k;
+            s.line_want.mouth_scale *= 0.6f + 0.4f * k;
+        }
+    }
+
     const bool surprised = strcmp(def->name, "surprised") == 0;
     if(surprised && strcmp(s.mood, "surprised") != 0) s.squash.v += FACE_STRETCH_SURPRISE_KICK;
     s.mood = def->name;
@@ -383,6 +490,21 @@ bool face_set_mood(const char * mood, uint8_t intensity)
     s.slow = 1.0f + (FACE_SLEEPY_SLOWDOWN - 1.0f) * (sleepy ? k : 0.0f);
     s.sleep_closed = sleepy && intensity >= FACE_SLEEP_CLOSED_INTENSITY;
     return true;
+}
+
+void face_set_style(face_style_t style)
+{
+    if(style != FACE_STYLE_FILLED && style != FACE_STYLE_LINE) return;
+    s.style = style;
+    s.line_shown = s.line_want;
+    snap_springs(); /* each style has its own eye sizes */
+    s.drawn_valid = false;
+    if(s.obj) lv_obj_invalidate(s.obj);
+}
+
+face_style_t face_get_style(void)
+{
+    return s.style;
 }
 
 void face_show_glyph(face_glyph_t glyph, uint32_t ms)

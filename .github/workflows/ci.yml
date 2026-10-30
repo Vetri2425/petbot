@@ -72,5 +72,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: face-snapshots
-          path: face-snapshots/*.png
+          path: face-snapshots/**/*.png
           if-no-files-found: error
