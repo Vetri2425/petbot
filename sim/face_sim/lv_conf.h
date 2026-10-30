@@ -1,14 +1,14 @@
-/* LVGL configuration for the PC face simulator. Unset options use LVGL's defaults
- * (lv_conf_internal.h). */
+/* LVGL configuration for the PC face simulator. Shared settings: lv_conf_common.h;
+ * unset options use LVGL's defaults (lv_conf_internal.h). */
 #ifndef LV_CONF_H
 #define LV_CONF_H
+
+#include "../../firmware/include/lv_conf_common.h" /* shared with the ESP32 build */
 
 #define LV_COLOR_DEPTH 32
 /* System malloc: the 2x display buffer and 300 KB snapshots don't fit LVGL's fixed pool. */
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
 
-#define LV_USE_LOG 1
-#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 #define LV_LOG_PRINTF 1
 
 /* SDL2 window + keyboard. Software rendering works with SDL_VIDEODRIVER=dummy. */
