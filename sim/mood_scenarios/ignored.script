@@ -1,0 +1,3 @@
+# Ignored for an hour: one pat, then nothing for 3600 s, then a pat wakes it up.
+1 EVT touch head
+3600 EVT touch head

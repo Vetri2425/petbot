@@ -1,0 +1,9 @@
+# Picked up and shaken: lifted, shaken hard, dropped onto the desk, then left alone.
+2 EVT imu pickup
+1.5 EVT imu shake
+0.4 EVT imu shake
+0.4 EVT imu shake
+0.4 EVT imu shake
+0.4 EVT imu shake
+0.4 EVT imu shake
+1.0 EVT imu fall
