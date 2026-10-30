@@ -99,6 +99,24 @@ impulse = 0.15            # each impulse is scaled by 1 +/- this
 left = ["wave_left", "look_left"]
 right = ["wave_right", "look_right"]
 
+# ---- Reflexes: a short fixed reaction shown over the mood, then control goes back -----
+# mood/intensity/hold_s: shown instead of the mood for hold_s; anim: sent first.
+# only_when_asleep: the reflex fires only if the event arrives while asleep.
+# The event still applies its impulse to the mood model as usual.
+[reflexes.imu.pickup]
+mood = "surprised"
+intensity = 90
+hold_s = 1.5
+
+[reflexes.imu.fall]
+mood = "surprised"
+intensity = 100
+hold_s = 1.0
+
+[reflexes.touch.head]
+anim = "blink"
+only_when_asleep = true
+
 # ---- State -> mood -------------------------------------------------------------------
 # A mood's score is the product of its ramps: [start, full] maps the signal from 0 at
 # `start` to 1 at `full` (full < start means "lower is stronger"). Highest score wins.

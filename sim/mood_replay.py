@@ -28,7 +28,7 @@ from petbot_brain.protocol import Event, Message, encode
 
 COLUMNS = (
     "t", "valence", "arousal", "energy", "social", "boredom", "asleep", "mood", "intensity",
-    "outputs",
+    "model_mood", "reflex", "outputs",
 )  # fmt: skip
 
 
@@ -75,9 +75,11 @@ def write_csv(
     for s, outputs in rows:
         sent += [(s.t, wire(m)) for m in outputs]
         if outputs or s.t >= next_sample:
+            mood, intensity = s.shown()  # what the face shows (a reflex may override)
             writer.writerow([
                 f"{s.t:.1f}", f"{s.valence:.3f}", f"{s.arousal:.3f}", f"{s.energy:.3f}",
-                f"{s.social:.3f}", f"{s.boredom:.3f}", int(s.asleep), s.mood, s.intensity,
+                f"{s.social:.3f}", f"{s.boredom:.3f}", int(s.asleep), mood, intensity,
+                s.mood, int(mood != s.mood or intensity != s.intensity),
                 ";".join(wire(m) for m in outputs),
             ])  # fmt: skip
             if s.t >= next_sample:

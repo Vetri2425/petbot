@@ -26,7 +26,7 @@ class MoodState:
     social: float  # 0 .. 1
     boredom: float  # 0 .. 1
     asleep: bool
-    mood: str  # shown mood (protocol name)
+    mood: str  # the model's mood (protocol name); a reflex may show something else
     intensity: int  # 0 .. 100
     mood_since: float
     habituation: Mapping[str, float] = field(default_factory=dict)  # event key -> recent repeats
@@ -35,6 +35,15 @@ class MoodState:
     sent_times: tuple[float, ...] = ()  # output times within the last RATE_WINDOW_S
     next_idle_anim_t: float = 0.0
     last_event_t: float = -math.inf
+    reflex_mood: str | None = None  # shown instead of `mood` until reflex_until
+    reflex_intensity: int = 0
+    reflex_until: float = -math.inf
+
+    def shown(self) -> tuple[str, int]:
+        """The mood and intensity on the face: an active reflex, else the model's mood."""
+        if self.reflex_mood is not None and self.t < self.reflex_until:
+            return self.reflex_mood, self.reflex_intensity
+        return self.mood, self.intensity
 
 
 def initial_state(p: Personality) -> MoodState:
@@ -118,9 +127,25 @@ def _decay(s: MoodState, p: Personality, dt: float) -> MoodState:
 
 def _apply_event(
     s: MoodState, event: Event, p: Personality, rng: random.Random
-) -> tuple[MoodState, list[Message]]:
+) -> tuple[MoodState, list[Message], list[Message]]:
+    """Returns (state, reflex anims, reaction anims)."""
     key = event_key(event.source, event.detail)
     anims: list[Message] = []
+    reflex_anims: list[Message] = []
+
+    # Reflex: a fixed reaction shown over the mood for a moment (checked before waking).
+    reflex = p.reflexes.get(key)
+    if reflex is not None and (s.asleep or not reflex.only_when_asleep):
+        if reflex.anim is not None:
+            reflex_anims.append(Anim(reflex.anim))
+        if reflex.mood is not None:
+            s = replace(
+                s,
+                reflex_mood=reflex.mood,
+                reflex_intensity=reflex.intensity,
+                reflex_until=s.t + reflex.hold_s,
+            )
+
     arousal_kick = 0.0
     if s.asleep:
         s = replace(s, asleep=False)
@@ -151,7 +176,7 @@ def _apply_event(
         + p.idle_quiet_after_event_s
         + rng.uniform(p.idle_interval_min_s, p.idle_interval_max_s),
     )
-    return s, anims
+    return s, reflex_anims, anims
 
 
 def _choose_mood(s: MoodState, p: Personality) -> MoodState:
@@ -197,9 +222,11 @@ def step(
     """Advance the model by `dt` seconds, apply `events`, and return the messages to send."""
     s = _decay(state, p, max(0.0, dt))
 
+    reflex_anims: list[Message] = []
     wanted_anims: list[Message] = []
     for event in events:
-        s, anims = _apply_event(s, event, p, rng)
+        s, reflexes, anims = _apply_event(s, event, p, rng)
+        reflex_anims += reflexes
         wanted_anims += anims
     if not events:
         s, anims = _idle_anim(s, p, rng)
@@ -213,19 +240,22 @@ def step(
         s = replace(s, asleep=True)
     s = _choose_mood(s, p)
 
-    # Outputs: MOOD first (only when it changed enough), then anims, all rate-limited.
-    # A MOOD that doesn't fit is retried next step (sent_* is unchanged); late anims are dropped.
+    # Outputs, all rate-limited: reflex anims, then MOOD (only when the shown mood changed
+    # enough), then reaction/idle anims. A MOOD that doesn't fit is retried next step
+    # (sent_* is unchanged); anims that don't fit are dropped.
     sent_times = tuple(t for t in s.sent_times if s.t - t < RATE_WINDOW_S)
     budget = p.max_messages_per_s - len(sent_times)
-    outputs: list[Message] = []
-    moved = abs(s.intensity - s.sent_intensity) if s.sent_intensity is not None else 0
+    outputs: list[Message] = reflex_anims[: max(0, budget)]
+    budget -= len(outputs)
+    mood, intensity = s.shown()
+    moved = abs(intensity - s.sent_intensity) if s.sent_intensity is not None else 0
     # Falling asleep always shows (sleepy 92 -> 100 is under the threshold but means "asleep").
     mood_changed = (
-        s.mood != s.sent_mood or moved >= p.min_intensity_change or (s.asleep and moved > 0)
+        mood != s.sent_mood or moved >= p.min_intensity_change or (s.asleep and moved > 0)
     )
     if mood_changed and budget > 0:
-        outputs.append(Mood(s.mood, s.intensity))
-        s = replace(s, sent_mood=s.mood, sent_intensity=s.intensity)
+        outputs.append(Mood(mood, intensity))
+        s = replace(s, sent_mood=mood, sent_intensity=intensity)
         budget -= 1
     for anim in wanted_anims[: max(0, budget)]:
         outputs.append(anim)

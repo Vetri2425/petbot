@@ -24,6 +24,17 @@ class Drive:
 
 
 @dataclass(frozen=True)
+class Reflex:
+    """A short fixed reaction to one event, shown over the mood, then control goes back."""
+
+    mood: str | None  # shown instead of the mood for hold_s (None: anim only)
+    intensity: int
+    hold_s: float
+    anim: str | None  # sent before any MOOD
+    only_when_asleep: bool
+
+
+@dataclass(frozen=True)
 class Personality:
     valence: Drive
     arousal: Drive
@@ -50,6 +61,7 @@ class Personality:
     annoyance_spoil: float  # fraction of current positive valence each annoyed repeat removes
     jitter: float
     reactions: Mapping[str, tuple[str, ...]]  # "touch left" -> ("wave_left", "look_left")
+    reflexes: Mapping[str, Reflex]  # "imu pickup" -> Reflex(...)
     neutral_score: float
     neutral_intensity: int
     min_intensity: int
@@ -117,6 +129,15 @@ class _Table:
     def keys(self) -> list[str]:
         return list(self._data)
 
+    def has(self, key: str) -> bool:
+        return key in self._data
+
+    def boolean(self, key: str) -> bool:
+        value = self.raw(key)
+        if not isinstance(value, bool):
+            raise PersonalityError(f"{self.where(key)} must be true or false")
+        return value
+
     def done(self) -> None:
         if self._data:
             raise PersonalityError(f"unknown key(s) in [{self._path}]: {', '.join(self._data)}")
@@ -136,6 +157,34 @@ def _impulse(t: _Table, signals: tuple[str, ...]) -> dict[str, float]:
     impulse = {s: t.num(s, -1.0, 1.0) for s in signals if s in t.keys()}
     t.done()
     return impulse
+
+
+def _reflex(t: _Table) -> Reflex:
+    mood = intensity = hold_s = None
+    if t.has("mood"):
+        mood = t.raw("mood")
+        if mood not in MOODS:
+            raise PersonalityError(f"{t.where('mood')}: unknown mood {mood!r}")
+        intensity = t.integer("intensity", 0, 100)
+        hold_s = t.num("hold_s", 0.001)
+    anim = None
+    if t.has("anim"):
+        anim = t.raw("anim")
+        try:
+            Anim(anim)
+        except ProtocolError as e:
+            raise PersonalityError(f"{t.where('anim')}: {e}") from e
+    only_when_asleep = t.boolean("only_when_asleep") if t.has("only_when_asleep") else False
+    t.done()
+    if mood is None and anim is None:
+        raise PersonalityError(f"[{t.where('')[:-1]}] needs a mood or an anim")
+    return Reflex(
+        mood,
+        intensity if intensity is not None else 0,
+        hold_s if hold_s is not None else 0.0,
+        anim,
+        only_when_asleep,
+    )
 
 
 def _drive(t: _Table) -> Drive:
@@ -218,6 +267,17 @@ def parse(data: Mapping[str, Any]) -> Personality:
         source_t.done()
     reactions_t.done()
 
+    reflexes: dict[str, Reflex] = {}
+    reflexes_t = root.table("reflexes")
+    for source in reflexes_t.keys():
+        source_t = reflexes_t.table(source)
+        for detail in source_t.keys():
+            if event_key(source, detail) not in expected:
+                raise PersonalityError(f"reflexes.{source}.{detail}: unknown event")
+            reflexes[event_key(source, detail)] = _reflex(source_t.table(detail))
+        source_t.done()
+    reflexes_t.done()
+
     moods_t = root.table("moods")
     mood_values = (
         moods_t.num("neutral_score", 0.0, 1.0),
@@ -295,6 +355,7 @@ def parse(data: Mapping[str, Any]) -> Personality:
         annoyance_spoil=habituation[5],
         jitter=jitter,
         reactions=reactions,
+        reflexes=reflexes,
         neutral_score=mood_values[0],
         neutral_intensity=mood_values[1],
         min_intensity=mood_values[2],
