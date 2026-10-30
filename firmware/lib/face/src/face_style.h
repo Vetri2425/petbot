@@ -18,8 +18,34 @@
 #define FACE_EYE_SPACING 150       /* px between the two eye centers */
 #define FACE_EYE_Y (-6)            /* px, eye centers relative to the screen middle */
 
-/* ---- Mood transitions -------------------------------------------------------------- */
-#define FACE_MOOD_TRANSITION_MS 300 /* ease-in-out between expressions */
+/* ---- Springs: every shape and position change overshoots a little, then settles -------
+ * Damped springs: stiffness K (1/s^2) and damping C (1/s); damping ratio = C / (2*sqrt(K)).
+ * Lower C = bouncier, higher K = faster. */
+#define FACE_SPRING_SHAPE_K 220.0f  /* eye size, roundness, offsets: ~0.45 s, ~15% overshoot */
+#define FACE_SPRING_SHAPE_C 15.0f
+#define FACE_SPRING_LID_K 420.0f    /* lids, slants, cheek arc */
+#define FACE_SPRING_LID_C 26.0f
+#define FACE_SPRING_GAZE_K 6400.0f  /* eye position: saccades land in ~60-90 ms */
+#define FACE_SPRING_GAZE_C 110.0f
+#define FACE_SPRING_SQUASH_K 520.0f /* squash & stretch wobble */
+#define FACE_SPRING_SQUASH_C 13.0f
+#define FACE_SPRING_GLYPH_K 520.0f  /* glyph pop in/out */
+#define FACE_SPRING_GLYPH_C 17.0f
+#define FACE_SPRING_STEP_MS 2       /* integration sub-step */
+#define FACE_MOOD_SETTLE_MS 700     /* roughly how long a mood change takes to settle */
+
+/* ---- Squash & stretch (kicks are spring velocities; + = wide/short, - = tall/narrow) ---- */
+#define FACE_SQUASH_LAND_KICK 3.2f      /* a hop lands */
+#define FACE_SQUASH_SACCADE_KICK 1.6f   /* a saccade lands */
+#define FACE_STRETCH_SURPRISE_KICK (-4.0f) /* becoming surprised */
+#define FACE_STRETCH_EXCLAIM_KICK (-3.0f)
+#define FACE_SQUASH_MAX 0.3f            /* clamp, fraction of the eye size */
+#define FACE_BLINK_SQUASH 0.18f         /* the eye widens by this as it closes */
+
+/* ---- Saccades (fast glances) -------------------------------------------------------- */
+#define FACE_SACCADE_ANTICIPATE 0.15f   /* small opposite move first, fraction of the jump */
+#define FACE_SACCADE_ANTICIPATE_MS 25
+#define FACE_SACCADE_LANDED_PX 1.5f     /* within this of the target = landed */
 
 /* ---- Idle life: blinks ------------------------------------------------------------- */
 #define FACE_BLINK_INTERVAL_MIN_MS 2000
@@ -34,7 +60,6 @@
 #define FACE_GLANCE_INTERVAL_MAX_MS 4500
 #define FACE_GLANCE_HOLD_MIN_MS 500      /* time spent looking away */
 #define FACE_GLANCE_HOLD_MAX_MS 1400
-#define FACE_GLANCE_MOVE_MS 180          /* eye travel time */
 #define FACE_GLANCE_MAX_X 14             /* px */
 #define FACE_GLANCE_MAX_Y 6
 
@@ -53,7 +78,6 @@
 #define FACE_WAVE_X 20             /* px glance toward the waving arm's side */
 #define FACE_WAVE_BOUNCES 2
 #define FACE_WAVE_BOUNCE_PX 10
-#define FACE_ANIM_RAMP_MS 160      /* ease in/out at the start and end of look/wave */
 
 /* ---- Moods ------------------------------------------------------------------------- */
 /* An expression is a set of deltas from neutral (all zero = neutral). The mood's
@@ -79,5 +103,45 @@ typedef struct {
 #define FACE_EXPR_SLEEPY {.lid_top = 0.55f, .dy = 8.0f}
 #define FACE_EXPR_CURIOUS {.grow_left = 0.18f, .grow_right = -0.10f, .tilt = 10.0f}
 #define FACE_EXPR_SURPRISED {.grow_w = 0.22f, .grow_h = 0.12f, .round = 1.0f, .dy = -6.0f}
+
+/* ---- Glyph eyes: each eye becomes a vector symbol for a while ------------------------- */
+#define FACE_GLYPH_SIZE 92              /* px, glyph box at scale 1 */
+#define FACE_GLYPH_POP_SQUASH 0.35f     /* squash/stretch while a glyph pops in or out */
+#define FACE_GLYPH_SWAP_BELOW 0.08f     /* swap glyphs once the old one has shrunk to this */
+#define FACE_COLOR_HEART 0xFF4F7B
+#define FACE_COLOR_STAR 0xFFD43B
+#define FACE_GLYPH_STROKE 11            /* px, x and spiral line width */
+#define FACE_CLOSED_STROKE 8            /* px, closed-eye arc width */
+#define FACE_SPIRAL_DEG_PER_S 540.0f
+#define FACE_HEARTS_MS 2600             /* hearts anim: heart eyes (+ blush) */
+#define FACE_STARS_MS 2200
+#define FACE_DIZZY_MS 2000              /* dizzy anim: rotating spirals */
+#define FACE_SLEEP_CLOSED_INTENSITY 95  /* sleepy at or above this shows closed eyes */
+
+/* ---- Accessories: overlays around the eyes ------------------------------------------- */
+#define FACE_COLOR_BLUSH 0xFF6F91
+#define FACE_COLOR_WATER 0x7CC8FF       /* tear, sweat */
+#define FACE_COLOR_MARK 0xFFC233        /* question and exclamation marks */
+#define FACE_COLOR_NOTE 0xB79CFF        /* music notes */
+#define FACE_COLOR_ZZZ 0xA9C4FF
+#define FACE_BLUSH_MS 3000
+#define FACE_BLUSH_OPA 170              /* 0-255 at the center (three soft layers) */
+#define FACE_BLUSH_W 46
+#define FACE_BLUSH_H 16
+#define FACE_BLUSH_DY 14                /* px below the eye */
+#define FACE_TEAR_MS 1600
+#define FACE_TEAR_SIZE 9                /* drop radius */
+#define FACE_TEAR_FALL_PX 72
+#define FACE_SWEAT_MS 1600
+#define FACE_SWEAT_SIZE 8
+#define FACE_SWEAT_SLIDE_PX 24
+#define FACE_ZZZ_MS 2600
+#define FACE_ZZZ_SIZE 14                /* first Z; later ones grow */
+#define FACE_ZZZ_RISE_PX 64
+#define FACE_QUESTION_MS 2200
+#define FACE_EXCLAIM_MS 1300
+#define FACE_MARK_SIZE 40               /* height of ? and ! */
+#define FACE_MUSIC_MS 2600
+#define FACE_MUSIC_RISE_PX 54
 
 #endif /* PETBOT_FACE_STYLE_H */
