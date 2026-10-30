@@ -1,0 +1,6 @@
+# Picked up while happy: a few pats, then lifted. The pickup reflex shows surprise for
+# 1.5 s, then the face goes back to the (still happy) mood.
+2 EVT touch head
+2 EVT touch head
+2 EVT touch back
+3 EVT imu pickup

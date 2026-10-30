@@ -1,0 +1,165 @@
+# PetBot personality: every mood-engine tuning value. Times are in seconds.
+# Loaded strictly by petbot_brain.mood.personality: missing or unknown keys are an error.
+# Try changes offline with sim/mood_replay.py before running them on the robot.
+
+# ---- Core feelings: decay toward a baseline with a half-life -------------------------
+[valence]          # unpleasant (-1) .. pleasant (+1)
+baseline = 0.1
+half_life_s = 40.0
+
+[arousal]          # calm (0) .. excited (1)
+baseline = 0.25
+half_life_s = 10.0
+
+# ---- Needs ---------------------------------------------------------------------------
+[social]           # rises with touch, falls toward the baseline when ignored
+start = 0.5
+baseline = 0.1
+half_life_s = 600.0
+lonely_below = 0.4        # below this the valence baseline drops (lonely)...
+lonely_valence = -0.25    # ...by this much at social = 0. Keep baseline + this above the sad
+                          # threshold: being ignored should end in a nap, not sadness.
+comfort_when_lonely = 1.2 # extra valence from a social touch, x loneliness (0..1)
+
+[boredom]          # rises toward idle_target when nothing happens; events lower it
+start = 0.0
+idle_target = 1.0
+rise_half_life_s = 300.0
+
+[energy]           # drains while awake, recovers while sleepy or asleep
+start = 1.0
+drain_per_hour = 0.8
+recover_sleepy_per_hour = 0.6
+recover_asleep_per_hour = 1.5
+asleep_below = 0.08       # falls asleep (sleepy 100, until the next event) below this...
+doze_after_s = 120.0      # ...or after being sleepy this long with no events
+wake_arousal = 0.3        # arousal kick when an event wakes it
+
+# ---- Event impulses (before habituation and jitter) ----------------------------------
+[impulses.touch.head]
+valence = 0.4
+arousal = 0.02
+social = 0.2
+boredom = -0.5
+
+[impulses.touch.left]
+valence = 0.15
+arousal = 0.15
+social = 0.12
+boredom = -0.5
+
+[impulses.touch.right]
+valence = 0.15
+arousal = 0.15
+social = 0.12
+boredom = -0.5
+
+[impulses.touch.back]
+valence = 0.2
+arousal = 0.1
+social = 0.15
+boredom = -0.5
+
+[impulses.imu.pickup]
+valence = 0.05
+arousal = 0.6
+social = 0.05
+boredom = -0.6
+
+[impulses.imu.shake]
+valence = -0.3
+arousal = 0.3
+boredom = -0.6
+
+[impulses.imu.tilt]
+arousal = 0.1
+boredom = -0.2
+
+[impulses.imu.fall]
+valence = -0.5
+arousal = 0.35
+boredom = -0.6
+
+# ---- Habituation: the same event repeated quickly matters less, then annoys ----------
+[habituation]
+half_life_s = 8.0         # how fast the repeat count fades
+weaken_per_repeat = 0.8   # response x this for each recent repeat
+min_response = 0.2
+annoyed_above = 4.0       # recent repeats beyond this give the annoyance impulse instead
+annoyance_spoils = 0.7    # each annoyed repeat also removes this fraction of current happiness
+
+[habituation.annoyance]
+valence = -0.15
+arousal = 0.1
+
+# ---- Randomness ----------------------------------------------------------------------
+[jitter]
+impulse = 0.15            # each impulse is scaled by 1 +/- this
+
+# Animations an event can trigger; one is picked at random (skipped when annoyed or asleep).
+[reactions.touch]
+left = ["wave_left", "look_left"]
+right = ["wave_right", "look_right"]
+
+# ---- Reflexes: a short fixed reaction shown over the mood, then control goes back -----
+# mood/intensity/hold_s: shown instead of the mood for hold_s; anim: sent first.
+# only_when_asleep: the reflex fires only if the event arrives while asleep.
+# The event still applies its impulse to the mood model as usual.
+[reflexes.imu.pickup]
+mood = "surprised"
+intensity = 90
+hold_s = 1.5
+
+[reflexes.imu.fall]
+mood = "surprised"
+intensity = 100
+hold_s = 1.0
+
+[reflexes.touch.head]
+anim = "blink"
+only_when_asleep = true
+
+# ---- State -> mood -------------------------------------------------------------------
+# A mood's score is the product of its ramps: [start, full] maps the signal from 0 at
+# `start` to 1 at `full` (full < start means "lower is stronger"). Highest score wins.
+[moods]
+neutral_score = 0.25
+neutral_intensity = 50
+min_intensity = 20
+hysteresis = 0.12         # a new mood must beat the current one by this much...
+min_hold_s = 2.0          # ...and the current one must have been shown this long...
+override_margin = 0.35    # ...unless it wins by this much (sudden events)
+
+[moods.happy]
+valence = [0.15, 0.6]
+
+[moods.sad]
+valence = [-0.35, -0.8]   # neutral band: mild negativity shows neutral, sadness needs a cause
+arousal = [0.6, 0.35]
+
+[moods.angry]
+valence = [-0.15, -0.9]   # wide: annoyance from petting reads mild, a hard shake reads full
+arousal = [0.4, 0.7]
+
+[moods.sleepy]
+energy = [0.35, 0.1]
+
+[moods.curious]
+boredom = [0.55, 0.95]
+energy = [0.2, 0.5]       # too tired to be curious
+
+[moods.surprised]
+arousal = [0.6, 0.9]
+valence = [-0.4, -0.1]    # surprise, not shock: needs a mood that isn't negative
+
+# ---- Output --------------------------------------------------------------------------
+[output]
+min_intensity_change = 10 # resend MOOD only for a new mood or a change this big
+max_messages_per_s = 5
+
+# ---- Spontaneous behaviour when idle -------------------------------------------------
+[idle]
+anims = ["look_left", "look_right", "blink"]
+quiet_after_event_s = 8.0
+interval_min_s = 6.0
+interval_max_s = 20.0
